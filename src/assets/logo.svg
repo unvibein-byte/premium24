@@ -1,0 +1,6 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="100" cy="100" r="95" stroke="#C0842E" stroke-width="10"/>
+  <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" fill="#C0842E" font-size="80" font-weight="bold" font-family="Arial">P</text>
+  <text x="75%" y="40%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="30" font-weight="bold" font-family="Arial">24</text>
+  <text x="50%" y="80%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Arial">PREMIUM24</text>
+</svg>

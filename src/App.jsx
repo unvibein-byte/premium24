@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { GoogleLogin } from '@react-oauth/google'
 import './App.css'
 import { 
   ArrowRight, ArrowLeft, Check, Play, Globe, Menu, Wallet, Bell, MessageCircle, ChevronsRight, XCircle, CheckCircle,
@@ -67,15 +68,6 @@ const slides = [
   }
 ]
 
-const GoogleLogo = () => (
-  <svg width="24" height="24" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M47.532 24.5528C47.532 22.8837 47.3823 21.2789 47.1082 19.7348H24.4756V28.8459H37.4116C36.8532 31.854 35.1524 34.4087 32.6033 36.1158V42.1793H40.38V34.9744C44.928 30.7845 47.532 24.5528 47.532 24.5528Z" fill="#4285F4"/>
-    <path d="M24.4756 48.0001C30.9529 48.0001 36.3813 45.8573 40.384 42.1793L32.6074 36.1158C30.45 37.5623 27.7027 38.4111 24.4756 38.4111C18.2217 38.4111 12.9248 34.1611 11.0335 28.4239H3.04297V34.6192C7.00977 42.5029 15.1097 48.0001 24.4756 48.0001Z" fill="#34A853"/>
-    <path d="M11.0335 28.4239C10.5513 26.9859 10.2773 25.4528 10.2773 23.8648C10.2773 22.2768 10.5513 20.7437 11.0335 19.3057V13.1104H3.04297C1.41172 16.3456 0.480469 19.9961 0.480469 23.8648C0.480469 27.7336 1.41172 31.384 3.04297 34.6192L11.0335 28.4239Z" fill="#FBBC05"/>
-    <path d="M24.4756 9.32363C28.0004 9.32363 31.1645 10.5367 33.6601 12.9154L40.5583 6.01716C36.3772 2.29054 30.9488 0 24.4756 0C15.1097 0 7.00977 5.49712 3.04297 13.3808L11.0335 19.5762C12.9248 13.8389 18.2217 9.32363 24.4756 9.32363Z" fill="#EA4335"/>
-  </svg>
-)
-
 function App() {
   const [appState, setAppState] = useState('language_selection') // 'language_selection', 'onboarding', or 'login'
   const [currentSlide, setCurrentSlide] = useState(0)
@@ -83,6 +75,116 @@ function App() {
   const [activeMenuData, setActiveMenuData] = useState(null)
   const [purchasePopup, setPurchasePopup] = useState(null)
   const [selectedScheme, setSelectedScheme] = useState('offer')
+  const [isAuthenticating, setIsAuthenticating] = useState(false)
+  const [authMessage, setAuthMessage] = useState('')
+  const [currentUser, setCurrentUser] = useState(null)
+
+  const API_BASE_URL = useMemo(
+    () => {
+      const configured = (import.meta.env.VITE_API_BASE_URL || '').trim()
+      if (!configured) {
+        // Local default for Vite development to avoid accidental production calls.
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          return 'http://localhost:4000'
+        }
+        return ''
+      }
+      return configured.endsWith('/') ? configured.slice(0, -1) : configured
+    },
+    [],
+  )
+
+  const saveSession = (session) => {
+    localStorage.setItem('accessToken', session.accessToken)
+    localStorage.setItem('refreshToken', session.refreshToken)
+  }
+
+  const clearSession = () => {
+    localStorage.removeItem('accessToken')
+    localStorage.removeItem('refreshToken')
+    setCurrentUser(null)
+  }
+
+  const fetchMe = async (accessToken) => {
+    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!response.ok) {
+      throw new Error('Session expired, please sign in again')
+    }
+    return response.json()
+  }
+
+  const handleBackendGoogleLogin = async (credential) => {
+    if (!credential) {
+      setAuthMessage('Google token not found')
+      return
+    }
+
+    setIsAuthenticating(true)
+    setAuthMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: credential }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.message || 'Google login failed')
+      }
+
+      saveSession(data)
+      setCurrentUser(data.user)
+      setAppState('activated')
+    } catch (error) {
+      setAuthMessage(error.message || 'Google login failed')
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    const refreshToken = localStorage.getItem('refreshToken')
+    try {
+      if (refreshToken) {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        })
+      }
+    } catch (_error) {
+      // Ignore logout API failures and clear local state anyway.
+    } finally {
+      clearSession()
+      setIsMenuOpen(false)
+      setAppState('login')
+    }
+  }
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const accessToken = localStorage.getItem('accessToken')
+      if (!accessToken) {
+        return
+      }
+
+      setIsAuthenticating(true)
+      try {
+        const user = await fetchMe(accessToken)
+        setCurrentUser(user)
+        setAppState('activated')
+      } catch (_error) {
+        clearSession()
+      } finally {
+        setIsAuthenticating(false)
+      }
+    }
+
+    restoreSession()
+  }, [API_BASE_URL])
 
   const handleLanguageSelect = (lang) => {
     setAppState('onboarding')
@@ -94,10 +196,6 @@ function App() {
     } else {
       setAppState('login')
     }
-  }
-
-  const handleLogin = () => {
-    setAppState('activated')
   }
 
   const handleDemo = () => {
@@ -188,10 +286,19 @@ function App() {
               <div className="btn-icon play-icon"><Play size={18} fill="white" /></div>
               KNOW MORE
             </button>
-            <button className="login-btn action-sign-in" onClick={handleLogin}>
-              <div className="btn-icon"><GoogleLogo /></div>
-              SIGN IN
-            </button>
+            <div className="google-login-wrap">
+              <GoogleLogin
+                onSuccess={(credentialResponse) => handleBackendGoogleLogin(credentialResponse.credential)}
+                onError={() => setAuthMessage('Google sign-in popup was cancelled or blocked')}
+                text="signin_with"
+                shape="pill"
+                theme="outline"
+                size="large"
+                width="320"
+              />
+            </div>
+            {isAuthenticating && <p className="auth-message">Signing in...</p>}
+            {!!authMessage && <p className="auth-message auth-message-error">{authMessage}</p>}
           </div>
 
           <div className="login-footer-info">
@@ -286,7 +393,7 @@ function App() {
           <div className="profile-actions-list" style={{backgroundColor: 'white', borderRadius: '20px', padding: '0.5rem', width: '100%', boxShadow: '0 8px 30px rgba(0,0,0,0.06)'}}>
             <div style={{display: 'flex', alignItems: 'center', padding: '1.2rem 1rem', borderBottom: '1px solid #f1f5f9', color: '#1e293b', fontWeight: 600, cursor: 'pointer'}}><User size={22} style={{marginRight: '1rem', color: '#64748b'}} /> Edit Profile</div>
             <div style={{display: 'flex', alignItems: 'center', padding: '1.2rem 1rem', borderBottom: '1px solid #f1f5f9', color: '#1e293b', fontWeight: 600, cursor: 'pointer'}}><Globe size={22} style={{marginRight: '1rem', color: '#64748b'}} /> App Language</div>
-            <div style={{display: 'flex', alignItems: 'center', padding: '1.2rem 1rem', color: '#ef4444', fontWeight: 700, cursor: 'pointer'}} onClick={() => setAppState('login')}><LogOut size={22} style={{marginRight: '1rem'}} /> Logout User</div>
+            <div style={{display: 'flex', alignItems: 'center', padding: '1.2rem 1rem', color: '#ef4444', fontWeight: 700, cursor: 'pointer'}} onClick={handleLogout}><LogOut size={22} style={{marginRight: '1rem'}} /> Logout User</div>
           </div>
         </div>
       );
@@ -667,9 +774,9 @@ function App() {
               <div className="sidebar-avatar">
                 <img src={loginImg} alt="User" />
               </div>
-              <span className="sidebar-brand-name">24hr work</span>
+              <span className="sidebar-brand-name">{currentUser?.username || '24hr work'}</span>
             </div>
-            <LogOut size={24} className="sidebar-logout" onClick={() => setIsMenuOpen(false)} />
+            <LogOut size={24} className="sidebar-logout" onClick={handleLogout} />
           </div>
           
           <div className="sidebar-menu">

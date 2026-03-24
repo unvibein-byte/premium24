@@ -327,6 +327,21 @@ body {
   width: 100%;
 }
 
+.google-login-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.auth-message {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+.auth-message-error {
+  color: #fecaca;
+}
+
 .login-btn {
   background: #fff;
   color: #1a1a1a;

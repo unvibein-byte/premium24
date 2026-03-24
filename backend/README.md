@@ -18,8 +18,9 @@ Copy .env.example to .env and fill in the values:
 - DATABASE_URL: PostgreSQL connection string
 - ACCESS_TOKEN_SECRET: Random secret for JWT
 - REFRESH_TOKEN_SECRET: Another random secret
-- GOOGLE_CLIENT_ID: Web client ID from Google Console (must match frontend)
-- GOOGLE_CLIENT_SECRET: From Google Console
+- FIREBASE_PROJECT_ID: Firebase project ID
+- FIREBASE_CLIENT_EMAIL: Firebase service account client email
+- FIREBASE_PRIVATE_KEY: Firebase service account private key (`\n` escaped in env)
 - CORS_ORIGIN: Include web + localhost + capacitor origins
 
 Production domains used in this project:
@@ -36,7 +37,7 @@ Production domains used in this project:
 ## API Endpoints
 - POST /api/auth/register - Register user
 - POST /api/auth/login - Login user
-- POST /api/auth/google - Google OAuth login
+- POST /api/auth/google - Firebase Google sign-in login
 - POST /api/auth/refresh - Refresh token
 - POST /api/auth/logout - Logout
 - GET /api/auth/me - Get current user profile

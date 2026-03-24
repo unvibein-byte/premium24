@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { GoogleLogin } from '@react-oauth/google'
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import './App.css'
+import { auth, googleProvider } from './firebase'
 import { 
   ArrowRight, ArrowLeft, Check, Play, Globe, Menu, Wallet, Bell, MessageCircle, ChevronsRight, XCircle, CheckCircle,
   Home, List, Users, BookOpen, ClipboardList, ClipboardCheck, CheckCircle2, Youtube, Building2, Briefcase, Landmark, Lightbulb, ListChecks, Tag, Newspaper, History, User, PhoneCall, LogOut, CircleDollarSign
@@ -98,8 +99,19 @@ function App() {
   )
 
   const saveSession = (session) => {
-    localStorage.setItem('accessToken', session.accessToken)
-    localStorage.setItem('refreshToken', session.refreshToken)
+    if (session.accessToken) localStorage.setItem('accessToken', session.accessToken)
+    if (session.refreshToken) localStorage.setItem('refreshToken', session.refreshToken)
+  }
+
+  const mapFirebaseUser = (user) => {
+    if (!user) return null
+    return {
+      id: user.uid,
+      username: user.displayName || (user.email ? user.email.split('@')[0] : 'Google User'),
+      email: user.email || '',
+      role: 'user',
+      google_id: user.uid,
+    }
   }
 
   const clearSession = () => {
@@ -118,31 +130,46 @@ function App() {
     return response.json()
   }
 
-  const handleBackendGoogleLogin = async (credential) => {
-    if (!credential) {
-      setAuthMessage('Google token not found')
-      return
-    }
-
+  const handleBackendGoogleLogin = async () => {
     setIsAuthenticating(true)
     setAuthMessage('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken: credential, token: credential }),
-      })
+      const credentialResponse = await signInWithPopup(auth, googleProvider)
+      const idToken = await credentialResponse.user.getIdToken()
+      if (API_BASE_URL) {
+        const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        })
 
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.message || 'Google login failed')
+        if (response.ok) {
+          const data = await response.json()
+          saveSession(data)
+          setCurrentUser(data.user)
+          setAppState('activated')
+          return
+        }
+
+        // If backend Firebase Admin is not configured, continue with Firebase-only session.
+        if (response.status !== 503) {
+          const data = await response.json().catch(() => ({}))
+          throw new Error(data.message || 'Google login failed')
+        }
       }
 
-      saveSession(data)
-      setCurrentUser(data.user)
+      localStorage.setItem('firebaseIdToken', idToken)
+      setCurrentUser(mapFirebaseUser(credentialResponse.user))
       setAppState('activated')
+      setAuthMessage('')
     } catch (error) {
-      setAuthMessage(error.message || 'Google login failed')
+      if (error?.code === 'auth/popup-closed-by-user') {
+        setAuthMessage('Google sign-in popup was cancelled')
+      } else if (error?.code === 'auth/popup-blocked') {
+        setAuthMessage('Popup blocked by browser. Please allow popups and try again.')
+      } else {
+        setAuthMessage(error.message || 'Google login failed')
+      }
     } finally {
       setIsAuthenticating(false)
     }
@@ -161,6 +188,12 @@ function App() {
     } catch (_error) {
       // Ignore logout API failures and clear local state anyway.
     } finally {
+      try {
+        await signOut(auth)
+      } catch (_error) {
+        // Ignore Firebase sign out issues and clear local state anyway.
+      }
+      localStorage.removeItem('firebaseIdToken')
       clearSession()
       setIsMenuOpen(false)
       setAppState('login')
@@ -168,10 +201,10 @@ function App() {
   }
 
   useEffect(() => {
-    const restoreSession = async () => {
+    const restoreBackendSession = async () => {
       const accessToken = localStorage.getItem('accessToken')
       if (!accessToken) {
-        return
+        return false
       }
 
       setIsAuthenticating(true)
@@ -179,14 +212,40 @@ function App() {
         const user = await fetchMe(accessToken)
         setCurrentUser(user)
         setAppState('activated')
+        return true
       } catch (_error) {
         clearSession()
+        return false
       } finally {
         setIsAuthenticating(false)
       }
     }
 
-    restoreSession()
+    const restoreFirebaseSession = () => {
+      const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (!user) return
+        try {
+          const token = await user.getIdToken()
+          localStorage.setItem('firebaseIdToken', token)
+        } catch (_error) {
+          // Ignore token refresh issues on boot.
+        }
+        setCurrentUser(mapFirebaseUser(user))
+        setAppState('activated')
+      })
+      return unsubscribe
+    }
+
+    let unsubscribeFirebase = () => {}
+    restoreBackendSession().then((restored) => {
+      if (!restored) {
+        unsubscribeFirebase = restoreFirebaseSession()
+      }
+    })
+
+    return () => {
+      unsubscribeFirebase()
+    }
   }, [API_BASE_URL])
 
   const handleLanguageSelect = (lang) => {
@@ -290,15 +349,14 @@ function App() {
               KNOW MORE
             </button>
             <div className="google-login-wrap">
-              <GoogleLogin
-                onSuccess={(credentialResponse) => handleBackendGoogleLogin(credentialResponse.credential)}
-                onError={() => setAuthMessage('Google sign-in popup was cancelled or blocked')}
-                text="signin_with"
-                shape="pill"
-                theme="outline"
-                size="large"
-                width="320"
-              />
+              <button
+                className="login-btn action-google"
+                onClick={handleBackendGoogleLogin}
+                disabled={isAuthenticating}
+                type="button"
+              >
+                Sign in with Google
+              </button>
             </div>
             {isAuthenticating && <p className="auth-message">Signing in...</p>}
             {!!authMessage && <p className="auth-message auth-message-error">{authMessage}</p>}

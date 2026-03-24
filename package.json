@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@react-oauth/google": "^0.12.2",
     "@capacitor/android": "^8.2.0",
+    "firebase": "^11.8.1",
     "lucide-react": "^0.463.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

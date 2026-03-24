@@ -4,8 +4,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { body, validationResult } from "express-validator";
+import admin from "firebase-admin";
 import jwt from "jsonwebtoken";
-import { OAuth2Client } from "google-auth-library";
 import pg from "pg";
 
 dotenv.config();
@@ -19,18 +19,40 @@ const ACCESS_TOKEN_EXPIRES_IN = process.env.ACCESS_TOKEN_EXPIRES_IN || "15m";
 const REFRESH_TOKEN_EXPIRES_IN_DAYS = Number(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS || 30);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
 const DATABASE_URL = process.env.DATABASE_URL || "";
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
+const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL || "";
+const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY || "";
 const SETUP_API_KEY = process.env.SETUP_API_KEY || "";
+const missingFirebaseEnv = [
+  !FIREBASE_PROJECT_ID ? "FIREBASE_PROJECT_ID" : null,
+  !FIREBASE_CLIENT_EMAIL ? "FIREBASE_CLIENT_EMAIL" : null,
+  !FIREBASE_PRIVATE_KEY ? "FIREBASE_PRIVATE_KEY" : null,
+].filter(Boolean);
 
 if (!ACCESS_TOKEN_SECRET || !REFRESH_TOKEN_SECRET || !DATABASE_URL) {
   console.error("Missing required environment values. Check backend/.env.example");
   process.exit(1);
 }
 
-const googleClient = GOOGLE_CLIENT_ID
-  ? new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET || undefined)
-  : null;
+const hasFirebaseServiceAccount = Boolean(
+  FIREBASE_PROJECT_ID && FIREBASE_CLIENT_EMAIL && FIREBASE_PRIVATE_KEY
+);
+
+if (!hasFirebaseServiceAccount) {
+  console.warn(
+    `Firebase auth disabled. Missing env: ${missingFirebaseEnv.join(", ")}`
+  );
+}
+
+if (hasFirebaseServiceAccount && !admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: FIREBASE_PROJECT_ID,
+      clientEmail: FIREBASE_CLIENT_EMAIL,
+      privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    }),
+  });
+}
 
 const pool = new pg.Pool({
   connectionString: DATABASE_URL,
@@ -353,8 +375,11 @@ app.post(
   body("token").optional().isString().notEmpty(),
   async (req, res) => {
     if (sendValidationError(req, res)) return;
-    if (!googleClient || !GOOGLE_CLIENT_ID) {
-      return res.status(503).json({ message: "Google authentication is not configured" });
+    if (!hasFirebaseServiceAccount) {
+      return res.status(503).json({
+        message: "Firebase authentication is not configured",
+        missingEnv: missingFirebaseEnv,
+      });
     }
 
     const idToken = req.body.idToken || req.body.token;
@@ -363,17 +388,9 @@ app.post(
     }
 
     try {
-      const ticket = await googleClient.verifyIdToken({
-        idToken,
-        audience: GOOGLE_CLIENT_ID,
-      });
-      const payload = ticket.getPayload();
-      if (!payload) {
-        return res.status(400).json({ message: "Invalid Google token" });
-      }
-
-      const googleId = payload.sub;
-      const email = payload.email;
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const googleId = decodedToken.uid;
+      const email = decodedToken.email;
       if (!googleId || !email) {
         return res.status(400).json({ message: "Google account email is required" });
       }
@@ -408,9 +425,8 @@ app.post(
       return res.json({ user, ...session });
     } catch (error) {
       console.error("Google auth error:", error);
-      const status = error.message?.includes("Wrong recipient")
-        || error.message?.includes("Token used too late")
-        || error.message?.includes("Invalid token")
+      const status = error.code?.startsWith("auth/")
+        || error.message?.includes("Firebase ID token")
         ? 401
         : 500;
       return res.status(status).json({ message: "Failed to authenticate with Google" });

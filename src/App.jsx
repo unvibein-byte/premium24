@@ -82,11 +82,14 @@ function App() {
   const API_BASE_URL = useMemo(
     () => {
       const configured = (import.meta.env.VITE_API_BASE_URL || '').trim()
+      const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+
+      // Force local backend during Vite dev to avoid CORS issues from accidental production URLs.
+      if (import.meta.env.DEV && isLocalHost) {
+        return 'http://localhost:4000'
+      }
+
       if (!configured) {
-        // Local default for Vite development to avoid accidental production calls.
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-          return 'http://localhost:4000'
-        }
         return ''
       }
       return configured.endsWith('/') ? configured.slice(0, -1) : configured
@@ -127,7 +130,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken: credential }),
+        body: JSON.stringify({ idToken: credential, token: credential }),
       })
 
       const data = await response.json()

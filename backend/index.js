@@ -40,6 +40,8 @@ const pool = new pg.Pool({
 const defaultAllowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "https://typingwork24.com",
+  "https://www.typingwork24.com",
   "https://typingwork24.in",
   "https://www.typingwork24.in",
   "capacitor://localhost",
@@ -67,6 +69,11 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json());
+app.use((_req, res, next) => {
+  // Allow Google popup messaging flows in browsers that enforce COOP checks.
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  next();
+});
 
 const createAccessToken = (user) => {
   return jwt.sign(
@@ -342,16 +349,22 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
 
 app.post(
   "/api/auth/google",
-  body("idToken").isString().notEmpty(),
+  body("idToken").optional().isString().notEmpty(),
+  body("token").optional().isString().notEmpty(),
   async (req, res) => {
     if (sendValidationError(req, res)) return;
     if (!googleClient || !GOOGLE_CLIENT_ID) {
       return res.status(503).json({ message: "Google authentication is not configured" });
     }
 
+    const idToken = req.body.idToken || req.body.token;
+    if (!idToken) {
+      return res.status(400).json({ message: "Google id token is required" });
+    }
+
     try {
       const ticket = await googleClient.verifyIdToken({
-        idToken: req.body.idToken,
+        idToken,
         audience: GOOGLE_CLIENT_ID,
       });
       const payload = ticket.getPayload();
@@ -361,7 +374,9 @@ app.post(
 
       const googleId = payload.sub;
       const email = payload.email;
-      const name = payload.name || payload.given_name || "Google User";
+      if (!googleId || !email) {
+        return res.status(400).json({ message: "Google account email is required" });
+      }
 
       // Check if user exists
       let userResult = await pool.query(
@@ -393,7 +408,12 @@ app.post(
       return res.json({ user, ...session });
     } catch (error) {
       console.error("Google auth error:", error);
-      return res.status(500).json({ message: "Failed to authenticate with Google" });
+      const status = error.message?.includes("Wrong recipient")
+        || error.message?.includes("Token used too late")
+        || error.message?.includes("Invalid token")
+        ? 401
+        : 500;
+      return res.status(status).json({ message: "Failed to authenticate with Google" });
     }
   }
 );

@@ -22,8 +22,9 @@ Copy .env.example to .env and fill in the values:
 - GOOGLE_CLIENT_SECRET: From Google Console
 - CORS_ORIGIN: Include web + localhost + capacitor origins
 
-Production domain used in this project:
-- Frontend/API domain: `https://typingwork24.in`
+Production domains used in this project:
+- Frontend/API domain: `https://typingwork24.com`
+- Optional legacy domain: `https://typingwork24.in`
 
 ## Deployment Steps
 1. Upload the backend folder to your VPS

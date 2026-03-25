@@ -157,6 +157,28 @@ const issueSession = async (userId, username, role) => {
   return { accessToken, refreshToken };
 };
 
+const logUserActivity = async (user, eventType, source = "backend") => {
+  if (!user?.id) return;
+
+  const eventData = {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    google_id: user.google_id || null,
+    whatsapp_number: user.whatsapp_number || null,
+    is_premium: user.is_premium || false,
+    wallet_balance: Number(user.wallet_balance || 0),
+    referral_wallet: Number(user.referral_wallet || 0),
+    min_withdrawal: Number(user.min_withdrawal || 0)
+  };
+
+  await pool.query(
+    `INSERT INTO user_activities (user_id, event_type, event_source, event_data)
+     VALUES ($1, $2, $3, $4)`,
+    [user.id, eventType, source, eventData]
+  );
+};
+
 const runSchemaSql = async () => {
   const fs = await import("fs");
   const schema = fs.readFileSync("./schema.sql", "utf8");
@@ -285,6 +307,7 @@ app.post(
       }
 
       const session = await issueSession(user.id, user.username, user.role);
+      await logUserActivity(user, "login", "password");
       return res.json({
         user: { id: user.id, username: user.username, email: user.email, role: user.role, google_id: user.google_id, whatsapp_number: user.whatsapp_number, is_premium: user.is_premium, wallet_balance: user.wallet_balance, referral_wallet: user.referral_wallet, min_withdrawal: user.min_withdrawal },
         ...session
@@ -369,6 +392,19 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/auth/activity", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, event_type, event_source, event_data, created_at FROM user_activities WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100",
+      [req.user.sub]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("Activity fetch error:", error);
+    return res.status(500).json({ message: "Failed to fetch user activity" });
+  }
+});
+
 app.post(
   "/api/auth/google",
   body("idToken").optional().isString().notEmpty(),
@@ -422,6 +458,7 @@ app.post(
       }
 
       const session = await issueSession(user.id, user.username, user.role);
+      await logUserActivity(user, "login", "google");
       return res.json({ user, ...session });
     } catch (error) {
       console.error("Google auth error:", error);
@@ -457,7 +494,9 @@ app.put(
         return res.status(404).json({ message: "User not found" });
       }
 
-      return res.json(result.rows[0]);
+      const updatedUser = result.rows[0];
+      await logUserActivity(updatedUser, "profile_update", "user");
+      return res.json(updatedUser);
     } catch (error) {
       console.error("Profile update error:", error);
       return res.status(500).json({ message: "Failed to update profile" });
@@ -490,7 +529,9 @@ app.post(
         return res.status(404).json({ message: "User not found" });
       }
 
-      return res.json({ message: "Premium status updated", user: result.rows[0] });
+      const updatedUser = result.rows[0];
+      await logUserActivity(updatedUser, "premium_update", "admin");
+      return res.json({ message: "Premium status updated", user: updatedUser });
     } catch (error) {
       console.error("Premium update error:", error);
       return res.status(500).json({ message: "Failed to update premium status" });
@@ -572,6 +613,14 @@ app.post(
         [amount, userId]
       );
 
+      const userResultAfter = await pool.query(
+        "SELECT id, username, email, google_id, whatsapp_number, is_premium, wallet_balance, referral_wallet, min_withdrawal FROM auth_users WHERE id = $1",
+        [userId]
+      );
+      if (userResultAfter.rowCount) {
+        await logUserActivity(userResultAfter.rows[0], "withdrawal", "user");
+      }
+
       return res.json({ message: "Withdrawal request submitted successfully" });
     } catch (error) {
       console.error("Withdrawal error:", error);
@@ -640,6 +689,14 @@ app.post(
         "UPDATE auth_users SET referral_wallet = referral_wallet + $1 WHERE id = $2",
         [5.00, referrerId]
       );
+
+      const currentUser = await pool.query(
+        "SELECT id, username, email, google_id, whatsapp_number, is_premium, wallet_balance, referral_wallet, min_withdrawal FROM auth_users WHERE id = $1",
+        [userId]
+      );
+      if (currentUser.rowCount) {
+        await logUserActivity(currentUser.rows[0], "referral_added", "user");
+      }
 
       return res.json({ message: "Referral added successfully" });
     } catch (error) {

@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS referrals (
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals (user_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer_id ON referrals (referrer_id);
 
+CREATE TABLE IF NOT EXISTS user_activities (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  event_type VARCHAR(75) NOT NULL,
+  event_source VARCHAR(50) DEFAULT 'backend',
+  event_data JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities (user_id);
+
 -- Insert sample plans
 INSERT INTO plans (name, amount, description) VALUES
   ('Basic Plan', 10.00, 'Basic premium features'),

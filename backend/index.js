@@ -706,6 +706,138 @@ app.post(
   }
 );
 
+// Payment endpoints
+app.post('/api/payment/create-order', requireAuth, async (req, res) => {
+  const { amount, currency = 'USD', country, payType, description } = req.body;
+  const userId = req.user.sub;
+
+  try {
+    // Validate required fields
+    if (!amount || !country || !payType) {
+      return res.status(400).json({ message: 'Missing required fields: amount, country, payType' });
+    }
+
+    // Generate order ID
+    const orderId = `P24_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Store payment order in database
+    await pool.query(
+      `INSERT INTO payment_orders (order_id, user_id, amount, currency, country, pay_type, description, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())`,
+      [orderId, userId, amount, currency, country, payType, description || 'Premium24 Payment']
+    );
+
+    // Here you would integrate with WatchPay API
+    // For now, return mock response
+    const paymentUrl = `https://your-watchpay-domain.com/pay/web?order_id=${orderId}`;
+
+    res.json({
+      orderId,
+      paymentUrl,
+      status: 'pending'
+    });
+
+  } catch (error) {
+    console.error('Create payment order error:', error);
+    res.status(500).json({ message: 'Failed to create payment order' });
+  }
+});
+
+app.get('/api/payment/status/:orderId', requireAuth, async (req, res) => {
+  const { orderId } = req.params;
+  const userId = req.user.sub;
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM payment_orders WHERE order_id = $1 AND user_id = $2',
+      [orderId, userId]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ message: 'Payment order not found' });
+    }
+
+    const order = result.rows[0];
+    res.json({
+      orderId: order.order_id,
+      status: order.status,
+      amount: order.amount,
+      currency: order.currency,
+      createdAt: order.created_at,
+      updatedAt: order.updated_at
+    });
+
+  } catch (error) {
+    console.error('Get payment status error:', error);
+    res.status(500).json({ message: 'Failed to get payment status' });
+  }
+});
+
+app.post('/api/payment/webhook', async (req, res) => {
+  // WatchPay webhook endpoint
+  const { order_id, status, transaction_id, amount } = req.body;
+
+  // Verify the request is from WatchPay (implement signature verification)
+  // For now, accept all requests
+
+  try {
+    // Update payment order status
+    const result = await pool.query(
+      `UPDATE payment_orders
+       SET status = $1, transaction_id = $2, updated_at = NOW()
+       WHERE order_id = $3
+       RETURNING user_id, amount`,
+      [status, transaction_id, order_id]
+    );
+
+    if (result.rowCount) {
+      const { user_id, amount } = result.rows[0];
+
+      // If payment successful, update user wallet
+      if (status === 'success') {
+        await pool.query(
+          'UPDATE auth_users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+          [amount, user_id]
+        );
+
+        // Log the payment activity
+        const userResult = await pool.query('SELECT * FROM auth_users WHERE id = $1', [user_id]);
+        if (userResult.rowCount) {
+          await logUserActivity(userResult.rows[0], 'payment_received', 'watchpay');
+        }
+      }
+    }
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Payment webhook error:', error);
+    res.status(500).json({ message: 'Webhook processing failed' });
+  }
+});
+
+app.get('/api/payment/orders', requireAuth, async (req, res) => {
+  const userId = req.user.sub;
+  const { limit = 20, offset = 0 } = req.query;
+
+  try {
+    const result = await pool.query(
+      `SELECT order_id, amount, currency, country, pay_type, description, status, transaction_id, created_at, updated_at
+       FROM payment_orders
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+
+    res.json(result.rows);
+
+  } catch (error) {
+    console.error('Get payment orders error:', error);
+    res.status(500).json({ message: 'Failed to get payment orders' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Premium24 backend listening on port ${PORT}`);
 });

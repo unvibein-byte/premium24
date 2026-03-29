@@ -7,6 +7,7 @@ import {
   Home, List, Users, BookOpen, ClipboardList, ClipboardCheck, CheckCircle2, Youtube, Building2, Briefcase, Landmark, Lightbulb, ListChecks, Tag, Newspaper, History, User, PhoneCall, LogOut, CircleDollarSign,
   Instagram, Facebook, Smartphone
 } from 'lucide-react'
+import PaymentModal from './components/PaymentModal'
 
 // Illustrations
 import welcomeImg from './assets/welcome_onboarding.png'
@@ -85,6 +86,7 @@ function App() {
   const [paymentProofsPopup, setPaymentProofsPopup] = useState(false)
   const [supportPopup, setSupportPopup] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
+  const [paymentModal, setPaymentModal] = useState(null)
   const [currentLanguage, setCurrentLanguage] = useState('en')
   const [userPlan, setUserPlan] = useState('Demo') // 'Demo', 'Gold', 'Platinum', 'Silver Plus'
 
@@ -1486,6 +1488,88 @@ function App() {
             <button className="plan-action-btn dark-btn fill-btn" onClick={() => setPurchasePopup({name: 'Silver Plus', offerAmount: 3999, fullAmount: 39999})}>SELECT PLAN</button>
           </div>
         </main>
+
+        {/* Purchase Options Popup */}
+        {purchasePopup && (
+          <div className="sidebar-overlay" style={{zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={() => setPurchasePopup(null)}>
+            <div className="scheme-popup" onClick={(e) => e.stopPropagation()}>
+              <div className="scheme-popup-header">
+                <h3>Select Scheme</h3>
+                <button className="popup-close-btn" onClick={() => setPurchasePopup(null)}>✖</button>
+              </div>
+              
+              <div className="scheme-popup-body">
+                <label className="scheme-option">
+                  <div className={`custom-radio-circle ${selectedScheme === 'offer' ? 'selected' : ''}`}>
+                    <div className="inner-dot"></div>
+                  </div>
+                  <input 
+                    type="radio" 
+                    name="scheme" 
+                    value="offer" 
+                    checked={selectedScheme === 'offer'}
+                    onChange={(e) => setSelectedScheme(e.target.value)}
+                    style={{display: 'none'}}
+                  />
+                  <span>Offer amount Rs. {purchasePopup.offerAmount}</span>
+                </label>
+                
+                <label className="scheme-option">
+                  <div className={`custom-radio-circle ${selectedScheme === 'full' ? 'selected' : ''}`}>
+                    <div className="inner-dot"></div>
+                  </div>
+                  <input 
+                    type="radio" 
+                    name="scheme" 
+                    value="full" 
+                    checked={selectedScheme === 'full'}
+                    onChange={(e) => setSelectedScheme(e.target.value)}
+                    style={{display: 'none'}}
+                  />
+                  <span>Full Amount Rs. {purchasePopup.fullAmount}</span>
+                </label>
+              </div>
+              
+              <div className="scheme-popup-footer">
+                <button 
+                  className="popup-ok-btn" 
+                  onClick={() => {
+                    const amount = selectedScheme === 'offer' ? purchasePopup.offerAmount : purchasePopup.fullAmount;
+                    setPaymentModal({ 
+                      amount, 
+                      currency: 'INR',
+                      description: `${purchasePopup.name} Plan - ${selectedScheme === 'offer' ? 'Offer' : 'Full'} Amount`
+                    });
+                    setPurchasePopup(null);
+                  }}
+                >
+                  Proceed to Payment
+                </button>
+                <button className="popup-cancel-btn" onClick={() => setPurchasePopup(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Modal */}
+        {paymentModal && (
+          <PaymentModal
+            isOpen={true}
+            onClose={() => setPaymentModal(null)}
+            amount={paymentModal.amount}
+            currency={paymentModal.currency}
+            onSuccess={(result) => {
+              console.log('Payment successful:', result);
+              // Handle successful payment - update user plan, etc.
+              setPaymentModal(null);
+              // You might want to show a success message or redirect
+            }}
+            onError={(error) => {
+              console.error('Payment error:', error);
+              // Handle payment error - show error message
+            }}
+          />
+        )}
         {renderModals()}
       </div>
     )

@@ -6,6 +6,7 @@ import {
   ArrowRight, ArrowLeft, Check, Play, Globe, Menu, Wallet, Bell, MessageCircle, ChevronsRight, XCircle, CheckCircle,
   Home, List, Users, BookOpen, ClipboardList, ClipboardCheck, CheckCircle2, Youtube, Building2, Briefcase, Landmark, Lightbulb, ListChecks, Tag, Newspaper, History, User, PhoneCall, LogOut, CircleDollarSign
 } from 'lucide-react'
+import PaymentModal from './components/PaymentModal'
 
 // Illustrations
 import welcomeImg from './assets/welcome_onboarding.png'
@@ -79,6 +80,7 @@ function App() {
   const [isAuthenticating, setIsAuthenticating] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [currentUser, setCurrentUser] = useState(null)
+  const [paymentModal, setPaymentModal] = useState(null)
 
   const API_BASE_URL = useMemo(
     () => {
@@ -729,10 +731,44 @@ function App() {
               </div>
               
               <div className="scheme-popup-footer">
-                <button className="popup-ok-btn" onClick={() => setPurchasePopup(null)}>OK</button>
+                <button 
+                  className="popup-ok-btn" 
+                  onClick={() => {
+                    const amount = selectedScheme === 'offer' ? purchasePopup.offerAmount : purchasePopup.fullAmount;
+                    setPaymentModal({ 
+                      amount, 
+                      currency: 'INR',
+                      description: `${purchasePopup.name} Plan - ${selectedScheme === 'offer' ? 'Offer' : 'Full'} Amount`
+                    });
+                    setPurchasePopup(null);
+                  }}
+                >
+                  Proceed to Payment
+                </button>
+                <button className="popup-cancel-btn" onClick={() => setPurchasePopup(null)}>Cancel</button>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Payment Modal */}
+        {paymentModal && (
+          <PaymentModal
+            isOpen={true}
+            onClose={() => setPaymentModal(null)}
+            amount={paymentModal.amount}
+            currency={paymentModal.currency}
+            onSuccess={(result) => {
+              console.log('Payment successful:', result);
+              // Handle successful payment - update user plan, etc.
+              setPaymentModal(null);
+              // You might want to show a success message or redirect
+            }}
+            onError={(error) => {
+              console.error('Payment error:', error);
+              // Handle payment error - show error message
+            }}
+          />
         )}
       </div>
     )

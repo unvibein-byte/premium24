@@ -20,21 +20,18 @@ body {
 
 .app-container {
   min-height: 100vh;
-  /* Use dvh for better mobile viewport handling if supported */
-  min-height: 100dvh; 
   width: 100%;
-  max-width: 500px; /* Cap width for desktop but centered */
-  margin: 0 auto;
   background-color: var(--primary-green);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  padding: 1.25rem;
+  padding: 0; /* Remove default padding for better control */
   color: var(--text-white);
   text-align: center;
   position: relative;
   overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Header */
@@ -530,7 +527,6 @@ body {
 
 .demo-main {
   width: 100%;
-  max-width: 500px;
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -964,7 +960,6 @@ body {
 .iframe-container {
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-width: 500px;
 }
 
 /* Generic View Styling */
@@ -1434,3 +1429,413 @@ body {
 .popup-ok-btn:active {
   opacity: 0.7;
 }
+
+/* Wallet Screen Styles */
+.wallet-screen-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.5rem; /* Reduced padding */
+  background-color: #f5f8fa;
+  min-height: calc(100vh - 64px);
+  overflow-y: visible;
+}
+
+.wallet-main-card {
+  width: 100%;
+  background-color: white;
+  border-radius: 24px;
+  padding: 2rem 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.info-icon-wrapper {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+}
+
+.info-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background-color: #e2e8f0;
+  color: #94a3b8;
+  border-radius: 50%;
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-family: serif;
+}
+
+.wallet-illustration-wrapper {
+  width: 100%;
+  max-width: 240px;
+  margin-bottom: 1.5rem;
+}
+
+.wallet-illustration {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.wallet-content {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.wallet-screen-title {
+  color: #003d2b;
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+}
+
+.wallet-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.balance-symbol {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #c16e2a; /* Brownish color from image */
+}
+
+.balance-amount {
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: #c16e2a;
+}
+
+.amount-input-container {
+  width: 100%;
+  margin-bottom: 1.5rem;
+}
+
+.amount-input {
+  width: 100%;
+  height: 56px;
+  border-radius: 28px;
+  border: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+  padding: 0 1.5rem;
+  font-size: 1.1rem;
+  text-align: center;
+  outline: none;
+  color: #1e293b;
+}
+
+.amount-input::placeholder {
+  color: #94a3b8;
+}
+
+.withdraw-button {
+  width: 100%;
+  height: 56px;
+  background-color: #b16d1f; /* Brownish from mockup */
+  color: white;
+  border: none;
+  border-radius: 28px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(177, 109, 31, 0.2);
+  margin-bottom: 1rem;
+  transition: transform 0.2s;
+}
+
+.withdraw-button:active {
+  transform: scale(0.98);
+}
+
+.min-payment-text {
+  color: #ce9b77;
+  font-size: 0.95rem;
+  margin-bottom: 2rem;
+}
+
+.payment-description {
+  color: #8b4513; /* SaddleBrown */
+  font-size: 1rem;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+  padding: 0 0.5rem;
+}
+
+.payment-description strong {
+  font-weight: 700;
+}
+
+.add-bank-button {
+  background: none;
+  border: none;
+  color: #8b4513;
+  font-size: 1.1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.plus-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid #8b4513;
+  border-radius: 50%;
+  font-size: 1.4rem;
+}
+
+.withdraw-history-footer {
+  width: 100%;
+  height: 56px;
+  background-color: #003d2b;
+  color: white;
+  border: none;
+  border-radius: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  margin-top: auto;
+  margin-bottom: 1rem;
+}
+
+.generic-view .generic-main {
+  padding: 0;
+  background-color: #f5f8fa;
+}
+
+
+/* Referral Wallet Styles */
+.referral-withdraw-row {
+  display: flex;
+  width: 100%;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.small-input {
+  flex: 1.5;
+  height: 48px;
+  font-size: 1rem;
+}
+
+.small-button {
+  flex: 1;
+  height: 48px;
+  font-size: 1.1rem;
+  margin-bottom: 0;
+}
+
+.dark-green-btn {
+  background-color: #003d2b;
+  box-shadow: 0 4px 10px rgba(0, 61, 43, 0.2);
+}
+
+.referral-payment-info-btn {
+  width: 100%;
+  height: 52px;
+  background-color: #b16d1f;
+  color: white;
+  border: none;
+  border-radius: 26px;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 4px 10px rgba(177, 109, 31, 0.2);
+}
+
+.thinner-text {
+  font-weight: 500;
+  margin-bottom: 1.5rem;
+}
+
+.referral-share-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.share-text-label {
+  color: #3b3bad;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  padding: 0 1rem;
+}
+
+.referral-link-box {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1.5px solid #3b3bad;
+  border-radius: 20px;
+  background-color: white;
+  color: #3b3bad;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 1rem;
+  word-break: break-all;
+}
+
+.copy-share-row {
+  display: flex;
+  width: 100%;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  justify-content: center;
+}
+
+.copy-btn, .share-btn {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  color: white;
+  font-weight: 700;
+  font-size: 1.1rem;
+  cursor: pointer;
+  max-width: 140px;
+}
+
+.copy-btn {
+  background-color: #003d2b;
+}
+
+.share-btn {
+  background-color: #b16d1f;
+}
+
+.social-icons-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.social-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.insta { background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%); }
+.fb { background-color: #1877F2; }
+.telegram { background-color: #0088cc; }
+.whatsapp { background-color: #25D366; }
+
+.social-icon:active { opacity: 0.8; }
+
+.total-referral-pill {
+  width: 100%;
+  height: 48px;
+  background-color: #003d2b;
+  color: #c0842e;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.total-referral-pill span {
+  color: white;
+}
+
+.total-referral-pill span::after {
+  content: '0';
+  color: #c0842e;
+}
+
+/* Fix for the pill text in JS rendering */
+.total-referral-pill {
+  color: white;
+}
+
+
+/* Referral Popup Customizations */
+.scheme-popup {
+  background-color: #244d3e; /* Slightly different green as per mockup */
+  border-radius: 16px;
+}
+
+.scheme-popup-header h3 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+}
+
+.scheme-option {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0.8rem 0;
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+.custom-radio-circle {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s;
+}
+
+.custom-radio-circle.selected {
+  border-color: #f97316; /* Orange border when selected */
+}
+
+.custom-radio-circle .inner-dot {
+  width: 10px;
+  height: 10px;
+  background-color: #f97316; /* Orange dot */
+}
+
+/* My Account Decorative Squares */
+.account-decor-squares {
+  pointer-events: none;
+}
+
+.decor-sq {
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.02);
+}
+
+.scheme-popup-footer .popup-ok-btn {
+  margin-top: 1rem;
+}
+

@@ -89,6 +89,9 @@ function App() {
   const [paymentModal, setPaymentModal] = useState(null)
   const [currentLanguage, setCurrentLanguage] = useState('en')
   const [userPlan, setUserPlan] = useState('Demo') // 'Demo', 'Gold', 'Platinum', 'Silver Plus'
+  const [withdrawalPopup, setWithdrawalPopup] = useState(false)
+  const [transactions, setTransactions] = useState([])
+  const [withdrawalAmount, setWithdrawalAmount] = useState('')
 
   
   const translations = {
@@ -301,6 +304,54 @@ function App() {
     setCurrentUser(null)
   }
 
+  const fetchTransactions = async () => {
+    if (!API_BASE_URL) return
+    const accessToken = localStorage.getItem('accessToken')
+    if (!accessToken) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/activity`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setTransactions(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch transactions:', error)
+    }
+  }
+
+  const handleWithdrawal = async () => {
+    if (!API_BASE_URL || !withdrawalAmount) return
+    const accessToken = localStorage.getItem('accessToken')
+    if (!accessToken) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/wallet/withdraw`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}` 
+        },
+        body: JSON.stringify({ amount: parseFloat(withdrawalAmount) }),
+      })
+      if (response.ok) {
+        alert('Withdrawal request submitted successfully')
+        setWithdrawalPopup(false)
+        setWithdrawalAmount('')
+        // Refresh user data
+        const user = await fetchMe(accessToken)
+        setCurrentUser(user)
+        fetchTransactions()
+      } else {
+        const error = await response.json()
+        alert(error.message || 'Failed to submit withdrawal')
+      }
+    } catch (error) {
+      console.error('Withdrawal error:', error)
+      alert('Failed to submit withdrawal')
+    }
+  }
+
   const fetchMe = async (accessToken) => {
     const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -428,6 +479,12 @@ function App() {
       unsubscribeFirebase()
     }
   }, [API_BASE_URL])
+
+  useEffect(() => {
+    if (appState === 'generic-page' && activeMenuData?.title?.includes('Wallet')) {
+      fetchTransactions()
+    }
+  }, [appState, activeMenuData])
 
   const handleLanguageSelect = (lang) => {
     setAppState('onboarding')
@@ -838,153 +895,197 @@ function App() {
     if (!activeMenuData) return null;
     const { title, Icon } = activeMenuData;
 
-    if (title === 'Wallet' || title === 'Survey Wallet') {
-      return (
-        <div className="wallet-screen-container" style={{backgroundColor: '#f1f5f9', padding: '0.8rem'}}>
-          <div className="wallet-main-card" style={{padding: '1.2rem', paddingTop: '3rem', position: 'relative', border: '1px solid #e2e8f0', borderRadius: '24px'}}>
-            <div className="info-icon-wrapper" style={{left: '1.2rem', right: 'auto', top: '1.2rem'}}>
-              <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
-            </div>
-            <div className="info-icon-wrapper" style={{right: '1.2rem', top: '1.2rem'}}>
-              <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
-            </div>
-            
-            <div className="wallet-illustration-wrapper" style={{maxWidth: '220px', marginBottom: '1.5rem', marginTop: '1rem'}}>
-              <img src={walletIllustration} alt="Wallet Illustration" className="wallet-illustration" />
-            </div>
+    if (title === 'Wallet' || title === 'Survey Wallet' || title === 'Referral Wallet') {
+      const balance = title === 'Wallet' || title === 'Survey Wallet' ? (currentUser?.wallet_balance || 0) : (currentUser?.referral_wallet || 0);
 
-            <div className="wallet-content">
-              <h1 className="wallet-screen-title" style={{fontSize: '2.5rem', fontWeight: '900', color: '#003d2b', marginBottom: '0.2rem'}}>{title}</h1>
+      const handleWithdraw = async () => {
+        const walletType = title === 'Referral Wallet' ? 'referral' : 'main';
+        const minWithdrawal = walletType === 'referral' ? 50 : (currentUser?.min_withdrawal || 100);
+
+        if (!withdrawalAmount || parseFloat(withdrawalAmount) < minWithdrawal) {
+          alert(`Minimum withdrawal amount is ₹${minWithdrawal}`);
+          return;
+        }
+        if (!API_BASE_URL) return;
+        const accessToken = localStorage.getItem('accessToken');
+        if (!accessToken) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/wallet/withdraw`, {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}` 
+            },
+            body: JSON.stringify({ 
+               amount: parseFloat(withdrawalAmount),
+               walletType: walletType 
+            }),
+          });
+          if (response.ok) {
+            alert('Withdrawal request submitted successfully!');
+            setWithdrawalAmount('');
+            window.location.reload();
+          } else {
+            const error = await response.json();
+            alert(error.message || 'Failed to submit withdrawal');
+          }
+        } catch (error) {
+          console.error('Withdrawal error:', error);
+          alert('Failed to submit withdrawal');
+        }
+      };
+
+      if (title === 'Wallet' || title === 'Survey Wallet') {
+        return (
+          <div className="wallet-screen-container" style={{backgroundColor: '#f1f5f9', padding: '0.8rem'}}>
+            <div className="wallet-main-card" style={{padding: '1.2rem', paddingTop: '3rem', position: 'relative', border: '1px solid #e2e8f0', borderRadius: '24px'}}>
+              <div className="info-icon-wrapper" style={{left: '1.2rem', right: 'auto', top: '1.2rem'}}>
+                <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
+              </div>
+              <div className="info-icon-wrapper" style={{right: '1.2rem', top: '1.2rem'}}>
+                <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
+              </div>
               
-              <div className="wallet-balance-row" style={{marginBottom: '1.5rem', marginTop: '0.2rem', gap: '0.6rem'}}>
-                <div style={{display: 'flex', alignItems: 'center', backgroundColor: '#eab308', borderRadius: '50%', color: 'white', fontWeight: 'bold', width: '22px', height: '22px', justifyContent: 'center', fontSize: '14px'}}>★</div>
-                <span className="balance-amount" style={{fontSize: '1.8rem', color: '#b45309', fontWeight: '800'}}>0 = ₹ 0</span>
+              <div className="wallet-illustration-wrapper" style={{maxWidth: '220px', marginBottom: '1.5rem', marginTop: '1rem'}}>
+                <img src={walletIllustration} alt="Wallet Illustration" className="wallet-illustration" />
               </div>
 
-              <div className="amount-input-container" style={{boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.04)', borderRadius: '28px', marginBottom: '1.2rem'}}>
-                <input 
-                  type="number" 
-                  placeholder="Enter Amount" 
-                  className="amount-input"
-                  style={{border: 'none', backgroundColor: '#f9fafb'}}
-                />
-              </div>
+              <div className="wallet-content">
+                <h1 className="wallet-screen-title" style={{fontSize: '2.5rem', fontWeight: '900', color: '#003d2b', marginBottom: '0.2rem'}}>{title}</h1>
+                
+                <div className="wallet-balance-row" style={{marginBottom: '1.5rem', marginTop: '0.2rem', gap: '0.6rem'}}>
+                  <div style={{display: 'flex', alignItems: 'center', backgroundColor: '#eab308', borderRadius: '50%', color: 'white', fontWeight: 'bold', width: '22px', height: '22px', justifyContent: 'center', fontSize: '14px'}}>★</div>
+                  <span className="balance-amount" style={{fontSize: '1.8rem', color: '#b45309', fontWeight: '800'}}>₹ {balance.toFixed(2)}</span>
+                </div>
 
-              <button className="withdraw-button" style={{backgroundColor: '#b45309', height: '60px', borderRadius: '30px', fontSize: '1.3rem', fontWeight: '600', letterSpacing: '0.5px', marginBottom: '0.8rem', boxShadow: '0 10px 20px -5px rgba(180, 83, 9, 0.3)'}}>
-                Withdraw
-              </button>
+                <div className="amount-input-container" style={{boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.04)', borderRadius: '28px', marginBottom: '1.2rem'}}>
+                  <input 
+                    type="number" 
+                    placeholder="Enter Amount" 
+                    className="amount-input"
+                    value={withdrawalAmount}
+                    onChange={(e) => setWithdrawalAmount(e.target.value)}
+                    style={{border: 'none', backgroundColor: '#f9fafb'}}
+                  />
+                </div>
 
-              <p className="min-payment-text" style={{textAlign: 'center', width: '100%', color: '#d97706', fontSize: '0.9rem', marginBottom: '1.2rem', fontWeight: '500'}}>Minimum Payment = Rs 100</p>
-
-              <div className="payment-description" style={{color: '#b45309', fontSize: '0.95rem', fontWeight: '600', lineHeight: '1.4', padding: '0 0.5rem', marginBottom: '1.5rem'}}>
-                You can receive your payment in a Bank account, Google Pay / Phone Pay / Paytm, or any UPI ID.
-              </div>
-
-              <button className="add-bank-button" style={{display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#b45309', fontWeight: '600', background: 'none', padding: '0', fontSize: '1rem'}}>
-                <div style={{width: '24px', height: '24px', border: '1.5px solid #b45309', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold'}}>+</div>
-                Add your bank details
-              </button>
-            </div>
-          </div>
-
-          <button className="withdraw-history-footer" style={{marginTop: 'auto', backgroundColor: '#003d2b', border: 'none', width: '95%', height: '56px', borderRadius: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', position: 'relative', overflow: 'hidden'}} onClick={() => handleMenuClick('Withdraw History', History)}>
-            <div style={{width: '24px', height: '24px', border: '2px solid white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-               <div style={{width: '2px', height: '6px', backgroundColor: 'white', position: 'absolute', top: '25%'}}></div>
-               <div style={{width: '6px', height: '2px', backgroundColor: 'white', position: 'absolute', right: '25%'}}></div>
-            </div>
-            <span style={{color: 'white', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '1px'}}>WITHDRAW HISTORY</span>
-          </button>
-        </div>
-      );
-    }
-
-    if (title === 'Referral Wallet') {
-      return (
-        <div className="wallet-screen-container" style={{backgroundColor: '#f1f5f9', padding: '0.8rem'}}>
-          <div className="wallet-main-card" style={{padding: '1.2rem', paddingTop: '1rem', position: 'relative', border: '1px solid #e2e8f0', borderRadius: '24px'}}>
-             <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '1rem'}}>
-               <div style={{width: '32px', height: '32px', backgroundColor: '#22c55e', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                 <MessageCircle size={18} color="white" fill="white" />
-               </div>
-               <div className="info-icon-wrapper" style={{position: 'static'}}>
-                 <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
-               </div>
-             </div>
-            
-            <div className="wallet-illustration-wrapper" style={{maxWidth: '130px', marginBottom: '1rem'}}>
-              <img src={referralWalletIllustration} alt="Referral Wallet Illustration" className="wallet-illustration" />
-            </div>
-
-            <div className="wallet-content">
-              <h1 className="wallet-screen-title" style={{fontSize: '1.8rem', fontWeight: '900', color: '#312e81', marginBottom: '0.2rem'}}>Wallet</h1>
-              <div className="wallet-balance-row" style={{marginBottom: '1rem'}}>
-                <span className="balance-amount" style={{fontSize: '1.6rem', color: '#b45309', fontWeight: '800'}}>₹ 0</span>
-              </div>
-
-              <div className="referral-withdraw-row" style={{display: 'flex', width: '100%', gap: '0', height: '48px', marginBottom: '1rem'}}>
-                <input 
-                  type="number" 
-                  placeholder="Enter Amount" 
-                  className="amount-input"
-                  style={{flex: 1, borderRadius: '24px 0 0 24px', border: '1px solid #312e81', backgroundColor: 'white', textAlign: 'center', height: '100%'}}
-                />
-                <button className="withdraw-button" style={{flex: 1, borderRadius: '0 24px 24px 0', backgroundColor: '#064e3b', color: 'white', border: 'none', height: '100%', fontSize: '1.1rem', fontWeight: '700'}}>
+                <button className="withdraw-button" onClick={handleWithdraw} style={{backgroundColor: '#b45309', height: '60px', borderRadius: '30px', fontSize: '1.3rem', fontWeight: '600', letterSpacing: '0.5px', marginBottom: '0.8rem', boxShadow: '0 10px 20px -5px rgba(180, 83, 9, 0.3)'}}>
                   Withdraw
                 </button>
-              </div>
 
-              <button className="referral-payment-info-btn" style={{width: '100%', backgroundColor: '#b45309', color: 'white', border: 'none', height: '48px', borderRadius: '12px', fontSize: '1.05rem', fontWeight: '700', marginBottom: '0.8rem'}}>
-                How much get referral payment
-              </button>
+                <p className="min-payment-text" style={{textAlign: 'center', width: '100%', color: '#d97706', fontSize: '0.9rem', marginBottom: '1.2rem', fontWeight: '500'}}>Minimum Payment = Rs {currentUser?.min_withdrawal || 100}</p>
 
-              <p className="min-payment-text thinner-text" style={{color: '#b45309', fontSize: '0.85rem', marginBottom: '1.2rem', textAlign: 'center', fontWeight: '500'}}>Minimum Payment = Rs 50</p>
-
-              <div className="referral-share-section" style={{width: '100%'}}>
-                <p className="share-text-label" style={{color: '#312e81', fontSize: '0.9rem', fontWeight: '700', marginBottom: '0.6rem'}}>Share This Referral Link To Your Friends and Followers</p>
-                <div className="referral-link-box" style={{border: '1.5px solid #312e81', borderRadius: '24px', padding: '0.8rem 1rem', marginBottom: '1.2rem', color: '#312e81', fontSize: '0.85rem', fontWeight: '600', wordBreak: 'break-all'}}>
-                  https://server.premium24.in/e3v5/149122431
+                <div className="payment-description" style={{color: '#b45309', fontSize: '0.95rem', fontWeight: '600', lineHeight: '1.4', padding: '0 0.5rem', marginBottom: '1.5rem'}}>
+                  You can receive your payment in a Bank account, Google Pay / Phone Pay / Paytm, or any UPI ID.
                 </div>
 
-                <div className="copy-share-row" style={{display: 'flex', gap: '1rem', marginBottom: '1.2rem'}}>
-                   <button style={{flex: 1, height: '44px', backgroundColor: '#064e3b', color: 'white', border: 'none', borderRadius: '22px', fontSize: '1.1rem', fontWeight: '800'}}>Copy</button>
-                   <button style={{flex: 1, height: '44px', backgroundColor: '#b45309', color: 'white', border: 'none', borderRadius: '22px', fontSize: '1.1rem', fontWeight: '800'}}>Share</button>
-                </div>
-
-                <div className="social-icons-row" style={{display: 'flex', justifyContent: 'center', gap: '1.2rem', marginBottom: '1.5rem'}}>
-                   <div style={{width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                     <Youtube size={20} color="white" />
-                   </div>
-                   <div style={{width: '32px', height: '32px', backgroundColor: '#1877f2', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                     <Globe size={20} color="white" />
-                   </div>
-                   <div style={{width: '32px', height: '32px', backgroundColor: '#3b82f6', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                     <MessageCircle size={20} color="white" />
-                   </div>
-                   <div style={{width: '32px', height: '32px', backgroundColor: '#22c55e', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                     <MessageCircle size={20} color="white" />
-                   </div>
-                </div>
+                <button className="add-bank-button" style={{display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#b45309', fontWeight: '600', background: 'none', padding: '0', fontSize: '1rem'}}>
+                  <div style={{width: '24px', height: '24px', border: '1.5px solid #b45309', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold'}}>+</div>
+                  Add your bank details
+                </button>
               </div>
-
-              <div className="total-referral-pill" style={{width: '100%', backgroundColor: '#064e3b', borderRadius: '24px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', color: 'white', fontSize: '1.1rem', fontWeight: '700'}}>
-                <Users size={20} color="white" /> <span>Total Referral :- 0</span>
-              </div>
-
-              <button className="add-bank-button" style={{color: '#312e81', background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: '0.6rem', fontWeight: '600', marginTop: '1.2rem', fontSize: '1.05rem'}}>
-                <div style={{width: '24px', height: '24px', border: '1.5px solid #312e81', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold'}}>+</div>
-                Add your bank details
-              </button>
             </div>
+
+            <button className="withdraw-history-footer" style={{marginTop: 'auto', backgroundColor: '#003d2b', border: 'none', width: '95%', height: '56px', borderRadius: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', position: 'relative', overflow: 'hidden'}} onClick={() => handleMenuClick('Withdraw History', History)}>
+              <div style={{width: '24px', height: '24px', border: '2px solid white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                 <History size={16} color="white" />
+              </div>
+              <span style={{color: 'white', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '1px'}}>WITHDRAW HISTORY</span>
+            </button>
           </div>
+        );
+      }
 
-          <button className="withdraw-history-footer" style={{marginTop: 'auto', backgroundColor: '#003d2b', border: 'none', width: '95%', height: '56px', borderRadius: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem'}} onClick={() => handleMenuClick('Withdraw History', History)}>
-            <div style={{width: '28px', height: '28px', border: '2px solid white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-               <History size={16} color="white" />
+      if (title === 'Referral Wallet') {
+        return (
+          <div className="wallet-screen-container" style={{backgroundColor: '#f1f5f9', padding: '0.8rem'}}>
+            <div className="wallet-main-card" style={{padding: '1.2rem', paddingTop: '1rem', position: 'relative', border: '1px solid #e2e8f0', borderRadius: '24px'}}>
+               <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '1rem'}}>
+                 <div style={{width: '32px', height: '32px', backgroundColor: '#22c55e', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                   <MessageCircle size={18} color="white" fill="white" />
+                 </div>
+                 <div className="info-icon-wrapper" style={{position: 'static'}}>
+                   <span className="info-circle" style={{backgroundColor: '#e2e8f0', color: '#94a3b8', fontSize: '10px'}}>i</span>
+                 </div>
+               </div>
+              
+              <div className="wallet-illustration-wrapper" style={{maxWidth: '130px', marginBottom: '1rem'}}>
+                <img src={referralWalletIllustration} alt="Referral Wallet Illustration" className="wallet-illustration" />
+              </div>
+
+              <div className="wallet-content">
+                <h1 className="wallet-screen-title" style={{fontSize: '1.8rem', fontWeight: '900', color: '#312e81', marginBottom: '0.2rem'}}>Wallet</h1>
+                <div className="wallet-balance-row" style={{marginBottom: '1rem'}}>
+                  <span className="balance-amount" style={{fontSize: '1.6rem', color: '#b45309', fontWeight: '800'}}>₹ {balance.toFixed(2)}</span>
+                </div>
+
+                <div className="referral-withdraw-row" style={{display: 'flex', width: '100%', gap: '0', height: '48px', marginBottom: '1rem'}}>
+                  <input 
+                    type="number" 
+                    placeholder="Enter Amount" 
+                    value={withdrawalAmount}
+                    onChange={(e) => setWithdrawalAmount(e.target.value)}
+                    className="amount-input"
+                    style={{flex: 1, borderRadius: '24px 0 0 24px', border: '1px solid #312e81', backgroundColor: 'white', textAlign: 'center', height: '100%'}}
+                  />
+                  <button className="withdraw-button" onClick={handleWithdraw} style={{flex: 1, borderRadius: '0 24px 24px 0', backgroundColor: '#064e3b', color: 'white', border: 'none', height: '100%', fontSize: '1.1rem', fontWeight: '700'}}>
+                    Withdraw
+                  </button>
+                </div>
+
+                <button className="referral-payment-info-btn" style={{width: '100%', backgroundColor: '#b45309', color: 'white', border: 'none', height: '48px', borderRadius: '12px', fontSize: '1.05rem', fontWeight: '700', marginBottom: '0.8rem'}}>
+                  How much get referral payment
+                </button>
+
+                <p className="min-payment-text thinner-text" style={{color: '#b45309', fontSize: '0.85rem', marginBottom: '1.2rem', textAlign: 'center', fontWeight: '500'}}>Minimum Payment = Rs 50</p>
+
+                <div className="referral-share-section" style={{width: '100%'}}>
+                  <p className="share-text-label" style={{color: '#312e81', fontSize: '0.9rem', fontWeight: '700', marginBottom: '0.6rem'}}>Share This Referral Link To Your Friends and Followers</p>
+                  <div className="referral-link-box" style={{border: '1.5px solid #312e81', borderRadius: '24px', padding: '0.8rem 1rem', marginBottom: '1.2rem', color: '#312e81', fontSize: '0.85rem', fontWeight: '600', wordBreak: 'break-all'}}>
+                    https://server.premium24.in/e3v5/149122431
+                  </div>
+
+                  <div className="copy-share-row" style={{display: 'flex', gap: '1rem', marginBottom: '1.2rem'}}>
+                     <button style={{flex: 1, height: '44px', backgroundColor: '#064e3b', color: 'white', border: 'none', borderRadius: '22px', fontSize: '1.1rem', fontWeight: '800'}}>Copy</button>
+                     <button style={{flex: 1, height: '44px', backgroundColor: '#b45309', color: 'white', border: 'none', borderRadius: '22px', fontSize: '1.1rem', fontWeight: '800'}}>Share</button>
+                  </div>
+
+                  <div className="social-icons-row" style={{display: 'flex', justifyContent: 'center', gap: '1.2rem', marginBottom: '1.5rem'}}>
+                     <div style={{width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                       <Youtube size={20} color="white" />
+                     </div>
+                     <div style={{width: '32px', height: '32px', backgroundColor: '#1877f2', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                       <Globe size={20} color="white" />
+                     </div>
+                     <div style={{width: '32px', height: '32px', backgroundColor: '#3b82f6', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                       <MessageCircle size={20} color="white" />
+                     </div>
+                     <div style={{width: '32px', height: '32px', backgroundColor: '#22c55e', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                       <MessageCircle size={20} color="white" />
+                     </div>
+                  </div>
+                </div>
+
+                <div className="total-referral-pill" style={{width: '100%', backgroundColor: '#064e3b', borderRadius: '24px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', color: 'white', fontSize: '1.1rem', fontWeight: '700'}}>
+                  <Users size={20} color="white" /> <span>Total Referral :- 0</span>
+                </div>
+
+                <button className="add-bank-button" style={{color: '#312e81', background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: '0.6rem', fontWeight: '600', marginTop: '1.2rem', fontSize: '1.05rem'}}>
+                  <div style={{width: '24px', height: '24px', border: '1.5px solid #312e81', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold'}}>+</div>
+                  Add your bank details
+                </button>
+              </div>
             </div>
-            <span style={{color: 'white', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '1px'}}>WITHDRAW HISTORY</span>
-          </button>
-        </div>
-      );
+
+            <button className="withdraw-history-footer" style={{marginTop: 'auto', backgroundColor: '#003d2b', border: 'none', width: '95%', height: '56px', borderRadius: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem'}} onClick={() => handleMenuClick('Withdraw History', History)}>
+              <div style={{width: '28px', height: '28px', border: '2px solid white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                 <History size={16} color="white" />
+              </div>
+              <span style={{color: 'white', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '1px'}}>WITHDRAW HISTORY</span>
+            </button>
+          </div>
+        );
+      }
     }
 
     if (title === 'My Account') {
@@ -1600,9 +1701,29 @@ function App() {
             </div>
           </div>
         )}
-
         {/* Payment Modal disabled to force direct portal redirect on OK */}
         {renderModals()}
+
+        {withdrawalPopup && (
+          <div className="sidebar-overlay" style={{zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={() => setWithdrawalPopup(false)}>
+            <div className="popup-content" style={{backgroundColor: 'white', borderRadius: '20px', padding: '2rem', width: '90%', maxWidth: '400px', position: 'relative'}} onClick={(e) => e.stopPropagation()}>
+              <button className="popup-close-btn" onClick={() => setWithdrawalPopup(false)}>✖</button>
+              <h2 style={{textAlign: 'center', marginBottom: '1.5rem', color: '#0f172a', fontWeight: 800}}>Withdraw Funds</h2>
+              
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: '#374151'}}>Amount (₹)</label>
+                <input type="number" value={withdrawalAmount} onChange={(e) => setWithdrawalAmount(e.target.value)} placeholder="Enter amount" style={{width: '100%', padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '1rem'}} />
+              </div>
+              
+              <div style={{marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#f3f4f6', borderRadius: '8px'}}>
+                <p style={{margin: 0, fontSize: '0.9rem', color: '#6b7280'}}>Minimum withdrawal: ₹ {currentUser?.min_withdrawal || 0}</p>
+                <p style={{margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: '#6b7280'}}>Available balance: ₹ {(title === 'Wallet' ? currentUser?.wallet_balance : currentUser?.referral_wallet) || 0}</p>
+              </div>
+              
+              <button style={{width: '100%', padding: '0.75rem', backgroundColor: '#f97316', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '1rem'}} onClick={handleWithdrawal}>Request Withdrawal</button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }

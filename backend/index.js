@@ -618,49 +618,53 @@ app.post(
   async (req, res) => {
     if (sendValidationError(req, res)) return;
 
-    const userId = req.user.sub;
-    const amount = parseFloat(req.body.amount);
+      const userId = req.user.sub;
+      const amount = parseFloat(req.body.amount);
+      const walletType = req.body.walletType || 'main'; // 'main' or 'referral'
 
-    try {
-      // Get user wallet info
-      const userResult = await pool.query(
-        "SELECT wallet_balance, min_withdrawal FROM auth_users WHERE id = $1",
-        [userId]
-      );
+      try {
+        // Get user wallet info
+        const userResult = await pool.query(
+          "SELECT wallet_balance, referral_wallet, min_withdrawal FROM auth_users WHERE id = $1",
+          [userId]
+        );
 
-      if (!userResult.rowCount) {
-        return res.status(404).json({ message: "User not found" });
-      }
+        if (!userResult.rowCount) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-      const user = userResult.rows[0];
+        const user = userResult.rows[0];
+        const balance = walletType === 'referral' ? Number(user.referral_wallet) : Number(user.wallet_balance);
+        const minWithdrawal = walletType === 'referral' ? 50 : Number(user.min_withdrawal || 100);
 
-      if (amount < user.min_withdrawal) {
-        return res.status(400).json({ message: `Minimum withdrawal amount is ${user.min_withdrawal}` });
-      }
+        if (amount < minWithdrawal) {
+          return res.status(400).json({ message: `Minimum withdrawal amount is ${minWithdrawal}` });
+        }
 
-      if (amount > user.wallet_balance) {
-        return res.status(400).json({ message: "Insufficient wallet balance" });
-      }
+        if (amount > balance) {
+          return res.status(400).json({ message: "Insufficient wallet balance" });
+        }
 
-      // Create withdrawal request
-      await pool.query(
-        "INSERT INTO withdrawals (user_id, amount) VALUES ($1, $2)",
-        [userId, amount]
-      );
+        // Create withdrawal request
+        await pool.query(
+          "INSERT INTO withdrawals (user_id, amount, status) VALUES ($1, $2, 'Pending')",
+          [userId, amount]
+        );
 
-      // Deduct from wallet
-      await pool.query(
-        "UPDATE auth_users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
-        [amount, userId]
-      );
+        // Deduct from the correct wallet
+        const updateQuery = walletType === 'referral' 
+          ? "UPDATE auth_users SET referral_wallet = referral_wallet - $1 WHERE id = $2"
+          : "UPDATE auth_users SET wallet_balance = wallet_balance - $1 WHERE id = $2";
 
-      const userResultAfter = await pool.query(
-        "SELECT id, username, email, google_id, whatsapp_number, is_premium, wallet_balance, referral_wallet, min_withdrawal FROM auth_users WHERE id = $1",
-        [userId]
-      );
-      if (userResultAfter.rowCount) {
-        await logUserActivity(userResultAfter.rows[0], "withdrawal", "user");
-      }
+        await pool.query(updateQuery, [amount, userId]);
+
+        const userResultAfter = await pool.query(
+          "SELECT id, username, email, google_id, whatsapp_number, is_premium, wallet_balance, referral_wallet, min_withdrawal FROM auth_users WHERE id = $1",
+          [userId]
+        );
+        if (userResultAfter.rowCount) {
+          await logUserActivity(userResultAfter.rows[0], `withdrawal_${walletType}`, "user");
+        }
 
       return res.json({ message: "Withdrawal request submitted successfully" });
     } catch (error) {
@@ -811,20 +815,18 @@ app.post('/api/payment/create-order', async (req, res) => {
       // DEVELOPMENT MODE: Mock payment gateway response
       console.log('[payment] *** MOCK MODE ENABLED - Development Payment ***');
       
-      const mockPaymentUrl = `https://mock-merchant.watchglb.com/pay?merchant_id=${finalMerchantId}&order_id=${orderId}&amount=${normalizedAmount}&currency=${normalizedCurrency}`;
+      const mockPaymentUrl = `${finalReturnUrl || 'http://localhost:5173/payment/success'}?order_id=${orderId}&status=success&pay_status=success`;
       
-      // Store order in DB
-      try {
-        await pool.query(
-          `INSERT INTO payment_orders 
-           (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
-          [orderId, userId, normalizedAmount, normalizedCurrency, country, payType, paymentMethod || '', description || 'Premium24 Payment (MOCK)',
-            req.ip || req.connection.remoteAddress, req.get('user-agent')]
-        );
-      } catch (dbError) {
-        console.warn('[payment] DB unavailable, order not stored:', dbError.message);
-      }
+      // Store order in DB if possible, but DO NOT block the payment flow if DB is slow/down
+      pool.query(
+        `INSERT INTO payment_orders 
+         (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
+        [orderId, userId, normalizedAmount, normalizedCurrency, country, payType, paymentMethod || '', description || 'Premium24 Payment (MOCK)',
+          req.ip || req.connection.remoteAddress, req.get('user-agent')]
+      ).catch(dbError => {
+        console.warn('[payment] DB Error (non-blocking):', dbError.message);
+      });
 
       console.log('[payment] Mock order created:', { orderId, amount: normalizedAmount, currency: normalizedCurrency, payType, userId });
 
@@ -909,18 +911,16 @@ app.post('/api/payment/create-order', async (req, res) => {
       });
     }
 
-    // Store order in DB if available; do not block payment when DB is down
-    try {
-      await pool.query(
-        `INSERT INTO payment_orders 
-         (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
-        [orderId, userId, amount, currency, country, payType, paymentMethod || '', description || 'Premium24 Payment',
-          req.ip || req.connection.remoteAddress, req.get('user-agent')]
-      );
-    } catch (dbError) {
-      console.warn('[payment] DB unavailable, order not stored:', dbError.message);
-    }
+    // Store order in DB if possible, but DO NOT block the payment flow 2
+    pool.query(
+      `INSERT INTO payment_orders 
+       (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
+      [orderId, userId, amount, currency, country, payType, paymentMethod || '', description || 'Premium24 Payment',
+        req.ip || req.connection.remoteAddress, req.get('user-agent')]
+    ).catch(dbError => {
+      console.warn('[payment] Production DB Error (non-blocking):', dbError.message);
+    });
 
     console.log('[payment] Order created:', { orderId, amount, currency, payType, userId });
 
@@ -1050,10 +1050,13 @@ app.post('/api/payment/callback', async (req, res) => {
         const balanceBefore = userResult.rows[0]?.wallet_balance || 0;
         const balanceAfter = balanceBefore + parseFloat(orderAmount);
 
-        // Update user wallet
+        // Update user status to Premium
+        const p24MinWithdrawal = parseFloat(orderAmount) >= 3000 ? 50 : 100;
+
+        // Update user wallet and premium status
         await pool.query(
-          'UPDATE auth_users SET wallet_balance = $1, updated_at = NOW() WHERE id = $2',
-          [balanceAfter, user_id]
+          'UPDATE auth_users SET wallet_balance = $1, is_premium = TRUE, min_withdrawal = $2, updated_at = NOW() WHERE id = $3',
+          [balanceAfter, p24MinWithdrawal, user_id]
         );
 
         // Create transaction record
@@ -1062,20 +1065,19 @@ app.post('/api/payment/callback', async (req, res) => {
            (user_id, type, amount, balance_before, balance_after, payment_order_id, transaction_id, status, description)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [user_id, 'deposit', orderAmount, balanceBefore, balanceAfter, 
-           order_id, transaction_id, 'success', `Payment received via WatchPay (Paytm)`]
+           order_id, transaction_id, 'success', `Premium Upgrade via WatchPay - ${orderAmount}`]
         );
 
         // Log user activity
         await logUserActivity(
           { id: user_id, username: 'user_' + user_id },
-          'payment_received',
+          'premium_activated',
           'watchpay'
         );
 
-        console.log('[payment] Success: wallet updated for user', user_id, 'Amount:', orderAmount);
+        console.log('[payment] Success: user upgraded to premium', user_id, 'Amount:', orderAmount);
       } catch (walletError) {
-        console.error('[payment] Error updating wallet:', walletError);
-        // Don't fail the callback response even if wallet update fails
+        console.error('[payment] Error updating user premium status:', walletError);
       }
     }
 

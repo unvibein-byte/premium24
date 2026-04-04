@@ -221,6 +221,19 @@ function App() {
   }, [drawCaptcha])
 
   useEffect(() => {
+    // Handle payment return success page (simple SPA hook)
+    try {
+      if (typeof window !== 'undefined' && window.location.pathname.includes('/payment/success')) {
+        const pending = localStorage.getItem('pendingPlan') || 'Premium';
+        setUserPlan(pending.includes('Gold') ? 'Gold' : pending.includes('Platinum') ? 'Platinum' : pending.includes('Silver') ? 'Silver Plus' : 'Premium');
+        setAppState('activated');
+        // Clean up flags
+        localStorage.removeItem('pendingPlan');
+      }
+    } catch (_e) {}
+  }, []);
+
+  useEffect(() => {
     if (appState === 'demo') {
       generateCaptcha()
     }
@@ -254,17 +267,10 @@ function App() {
     setCaptchaResult(null)
     generateCaptcha()
   }
-
   const API_BASE_URL = useMemo(
     () => {
       const configured = (import.meta.env.VITE_API_BASE_URL || '').trim()
-      const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-
-      // Force local backend during Vite dev to avoid CORS issues from accidental production URLs.
-      if (import.meta.env.DEV && isLocalHost) {
-        return 'http://localhost:4000'
-      }
-
+      // Always utilize VPS backend (configured in .env)
       if (!configured) {
         return ''
       }
@@ -513,9 +519,30 @@ function App() {
               </div>
               
               <div className="scheme-popup-footer">
-                <button className="popup-ok-btn" onClick={() => {
-                  setUserPlan(purchasePopup.name);
+                <button className="popup-ok-btn" onClick={async () => {
+                  try { console.log('[ui] popup OK clicked: direct portal redirect'); } catch (_e) {}
+                  const selectedAmount = selectedScheme === 'offer' ? purchasePopup.offerAmount : purchasePopup.fullAmount;
+                  const description = `${purchasePopup.name} Plan - ${selectedScheme === 'offer' ? 'Offer' : 'Full'} Amount`;
+                  try {
+                    localStorage.setItem('pendingPlan', description);
+                    console.log('[ui] Pending plan stored', { description, selectedAmount });
+                  } catch (_e) {}
                   setPurchasePopup(null);
+                  try {
+                    const { createPaymentOrder } = await import('./utils/watchpay');
+                    const { paymentUrl } = await createPaymentOrder({
+                      amount: selectedAmount,
+                      currency: 'INR',
+                      country: 'india',
+                      payType: '101',
+                      description,
+                      returnUrl: `${window.location.origin}/payment/success`
+                    });
+                    window.location.href = paymentUrl;
+                  } catch (e) {
+                    console.error('[ui] Direct payment redirect failed', e);
+                    alert(e.message || 'Failed to open payment portal');
+                  }
                 }}>OK</button>
               </div>
             </div>
@@ -1415,7 +1442,9 @@ function App() {
             </ul>
             
             <div className="bottom-note note-orange">Note - This fee is to access all the paid features and will be refunded when you learn and earn 35000 rs/-</div>
-            <button className="plan-action-btn dark-btn fill-btn" onClick={() => setPurchasePopup({name: 'Gold', offerAmount: 499, fullAmount: 6999})}>SELECT PLAN</button>
+            <button className="plan-action-btn dark-btn fill-btn" onClick={() => {
+              setPurchasePopup({ name: 'Gold', offerAmount: 499, fullAmount: 9999 });
+            }}>SELECT PLAN</button>
           </div>
 
           {/* PLATINUM CARD */}
@@ -1451,7 +1480,9 @@ function App() {
             </ul>
             
             <div className="bottom-note text-dark text-bold">Note - This fee is to access all the paid features and will be refunded when you learn and earn 35000 rs/-</div>
-            <button className="plan-action-btn dark-btn fill-btn" onClick={() => setPurchasePopup({name: 'Platinum', offerAmount: 999, fullAmount: 9999})}>SELECT PLAN</button>
+            <button className="plan-action-btn dark-btn fill-btn" onClick={() => {
+              setPurchasePopup({ name: 'Platinum', offerAmount: 999, fullAmount: 9999 });
+            }}>SELECT PLAN</button>
           </div>
 
           {/* SILVER PLUS CARD */}
@@ -1485,7 +1516,9 @@ function App() {
             </ul>
             
             <div className="bottom-note note-orange">Note - This fee is to access all the paid features and will be refunded when you learn and earn 35000 rs/-</div>
-            <button className="plan-action-btn dark-btn fill-btn" onClick={() => setPurchasePopup({name: 'Silver Plus', offerAmount: 3999, fullAmount: 39999})}>SELECT PLAN</button>
+            <button className="plan-action-btn dark-btn fill-btn" onClick={() => {
+              setPurchasePopup({ name: 'Silver Plus', offerAmount: 3999, fullAmount: 9999 });
+            }}>SELECT PLAN</button>
           </div>
         </main>
 
@@ -1533,14 +1566,31 @@ function App() {
               <div className="scheme-popup-footer">
                 <button 
                   className="popup-ok-btn" 
-                  onClick={() => {
+                  onClick={async () => {
+                    try { console.log('[ui] OK clicked: direct portal redirect'); } catch (_e) {}
                     const amount = selectedScheme === 'offer' ? purchasePopup.offerAmount : purchasePopup.fullAmount;
-                    setPaymentModal({ 
-                      amount, 
-                      currency: 'INR',
-                      description: `${purchasePopup.name} Plan - ${selectedScheme === 'offer' ? 'Offer' : 'Full'} Amount`
-                    });
+                    const description = `${purchasePopup.name} Plan - ${selectedScheme === 'offer' ? 'Offer' : 'Full'} Amount`;
+                    try { 
+                      localStorage.setItem('pendingPlan', description);
+                      console.log('[ui] Pending plan stored', { description, amount });
+                    } catch (_e) {}
                     setPurchasePopup(null);
+                    try {
+                      const { createPaymentOrder } = await import('./utils/watchpay');
+                      const { paymentUrl } = await createPaymentOrder({
+                        amount,
+                        currency: 'INR',
+                        country: 'india',
+                        payType: '101',
+                        description,
+                        returnUrl: `${window.location.origin}/payment/success`
+                      });
+                      try { console.log('[ui] Redirecting directly to portal', { paymentUrl }); } catch (_e) {}
+                      window.location.href = paymentUrl;
+                    } catch (e) {
+                      console.error('[ui] Payment start failed', e);
+                      alert(e.message || 'Failed to start payment. Please try again.');
+                    }
                   }}
                 >
                   Proceed to Payment
@@ -1551,25 +1601,7 @@ function App() {
           </div>
         )}
 
-        {/* Payment Modal */}
-        {paymentModal && (
-          <PaymentModal
-            isOpen={true}
-            onClose={() => setPaymentModal(null)}
-            amount={paymentModal.amount}
-            currency={paymentModal.currency}
-            onSuccess={(result) => {
-              console.log('Payment successful:', result);
-              // Handle successful payment - update user plan, etc.
-              setPaymentModal(null);
-              // You might want to show a success message or redirect
-            }}
-            onError={(error) => {
-              console.error('Payment error:', error);
-              // Handle payment error - show error message
-            }}
-          />
-        )}
+        {/* Payment Modal disabled to force direct portal redirect on OK */}
         {renderModals()}
       </div>
     )

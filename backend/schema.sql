@@ -73,14 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities (user_
 CREATE TABLE IF NOT EXISTS payment_orders (
   id BIGSERIAL PRIMARY KEY,
   order_id VARCHAR(100) NOT NULL UNIQUE,
-  user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
   amount DECIMAL(10,2) NOT NULL,
-  currency VARCHAR(3) NOT NULL DEFAULT 'USD',
-  country VARCHAR(50) NOT NULL,
-  pay_type VARCHAR(20) NOT NULL,
+  currency VARCHAR(3) NOT NULL DEFAULT 'INR',
+  country VARCHAR(50) NOT NULL DEFAULT 'india',
+  pay_type INTEGER NOT NULL, -- Paytm payment type code (101, 104, 105, etc.)
+  payment_method VARCHAR(100), -- e.g., "Paytm Native Category 1"
   description TEXT,
   status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, success, failed, cancelled
   transaction_id VARCHAR(100),
+  reference_id VARCHAR(100),
+  ip_address VARCHAR(45),
+  user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -88,15 +92,32 @@ CREATE TABLE IF NOT EXISTS payment_orders (
 CREATE INDEX IF NOT EXISTS idx_payment_orders_user_id ON payment_orders (user_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_order_id ON payment_orders (order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders (status);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_created_at ON payment_orders (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_transaction_id ON payment_orders (transaction_id);
+
+-- Paymet callback logs for debugging and audit
+CREATE TABLE IF NOT EXISTS payment_callbacks (
+  id BIGSERIAL PRIMARY KEY,
+  order_id VARCHAR(100) NOT NULL REFERENCES payment_orders(order_id),
+  callback_type VARCHAR(50) NOT NULL, -- 'watchpay_callback', 'status_check', 'webhook'
+  payload JSONB NOT NULL,
+  response_status VARCHAR(20),
+  ip_address VARCHAR(45),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_callbacks_order_id ON payment_callbacks (order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_callbacks_created_at ON payment_callbacks (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS transactions (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
-  type VARCHAR(50) NOT NULL, -- 'deposit', 'withdrawal', 'transfer', 'refund'
+  type VARCHAR(50) NOT NULL, -- 'deposit', 'withdrawal', 'payment', 'refund'
   amount DECIMAL(10,2) NOT NULL,
+  balance_before DECIMAL(10,2),
   balance_after DECIMAL(10,2),
-  order_id VARCHAR(100),
-  reference_id VARCHAR(100),
+  payment_order_id VARCHAR(100) REFERENCES payment_orders(order_id) ON DELETE SET NULL,
+  transaction_id VARCHAR(100),
   status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, success, failed
   description TEXT,
   metadata JSONB,
@@ -107,7 +128,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions (user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions (status);
-CREATE INDEX IF NOT EXISTS idx_transactions_order_id ON transactions (order_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_payment_order_id ON transactions (payment_order_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions (created_at DESC);
 
 -- Insert sample plans
 INSERT INTO plans (name, amount, description) VALUES

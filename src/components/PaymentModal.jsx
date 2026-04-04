@@ -8,8 +8,8 @@ import {
   validatePaymentParams
 } from '../utils/watchpay';
 
-const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, onError }) => {
-  const [selectedCountry, setSelectedCountry] = useState('');
+const PaymentModal = ({ isOpen, onClose, amount, currency = 'INR', onSuccess, onError, autoStart = false, presetCountry, presetPayType }) => {
+  const [selectedCountry, setSelectedCountry] = useState('india'); // Default to India
   const [selectedPaymentType, setSelectedPaymentType] = useState('');
   const [paymentTypeCategory, setPaymentTypeCategory] = useState('type1');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -18,9 +18,67 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
   const [status, setStatus] = useState(''); // 'idle', 'pending', 'success', 'failed'
   const [errorMessage, setErrorMessage] = useState('');
   const [paymentWindow, setPaymentWindow] = useState(null);
+  // Initialize with amount prop, or default to 499 for testing
+  const [payAmount, setPayAmount] = useState(Number(amount) || 499);
 
   const countries = getSupportedCountries();
   const paymentTypes = selectedCountry ? getPaymentTypes(selectedCountry, paymentTypeCategory) : {};
+
+  // Auto-select first payment method when payment types change
+  useEffect(() => {
+    if (!selectedPaymentType && Object.keys(paymentTypes).length > 0) {
+      const firstPaymentType = Object.keys(paymentTypes)[0];
+      setSelectedPaymentType(firstPaymentType);
+      try { console.log('[ui] Auto-selected payment type:', firstPaymentType); } catch (_e) {}
+    }
+  }, [paymentTypes, selectedPaymentType]);
+
+  // Initialize presets and optionally auto-start
+  useEffect(() => {
+    if (!isOpen) return;
+    try { 
+      console.log('[ui] PaymentModal open', { 
+        amount, 
+        payAmount, 
+        presetCountry, 
+        presetPayType, 
+        autoStart,
+        selectedCountry,
+        paymentTypeCategory 
+      }); 
+    } catch (_e) {}
+    
+    // Set initial amount if provided
+    if (amount && amount > 0) {
+      setPayAmount(Number(amount));
+    }
+    
+    // India is default, only override if preset is provided
+    if (presetCountry) {
+      setSelectedCountry(presetCountry);
+    }
+    if (presetPayType) {
+      setSelectedPaymentType(String(presetPayType));
+    }
+  }, [isOpen, amount, presetCountry, presetPayType]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (autoStart && payAmount > 0 && selectedCountry && selectedPaymentType && !isProcessing && status !== 'success') {
+      // Delay slightly to ensure state is applied
+      const t = setTimeout(() => {
+        try { console.log('[ui] PaymentModal autoStart: triggering handlePayment'); } catch (_e) {}
+        handlePayment();
+      }, 50);
+      return () => clearTimeout(t);
+    } else {
+      try {
+        console.log('[ui] PaymentModal autoStart: waiting', {
+          autoStart, payAmount, selectedCountry, selectedPaymentType, isProcessing, status
+        });
+      } catch (_e) {}
+    }
+  }, [autoStart, isOpen, payAmount, selectedCountry, selectedPaymentType, isProcessing, status]);
 
   useEffect(() => {
     if (selectedCountry) {
@@ -34,6 +92,7 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
     if (paymentWindow) {
       paymentWindow.close();
     }
+    setPayAmount(Number(amount) || 0);
     setSelectedCountry('');
     setSelectedPaymentType('');
     setStatus('');
@@ -44,19 +103,24 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
   };
 
   const handlePayment = async () => {
+    console.log('[ui] handlePayment:click', { payAmount, selectedCountry, selectedPaymentType, paymentTypes });
+    try { console.log('[ui] handlePayment:start', { payAmount, selectedCountry, selectedPaymentType }); } catch (_e) {}
     setErrorMessage('');
 
     // Validation
     if (!selectedCountry) {
       setErrorMessage('Please select a country');
+      try { console.warn('[ui] handlePayment:missingCountry'); } catch (_e) {}
       return;
     }
     if (!selectedPaymentType) {
       setErrorMessage('Please select a payment method');
+      try { console.warn('[ui] handlePayment:missingPaymentType'); } catch (_e) {}
       return;
     }
-    if (!amount || amount <= 0) {
+    if (!payAmount || payAmount <= 0) {
       setErrorMessage('Invalid payment amount');
+      try { console.warn('[ui] handlePayment:invalidAmount', { payAmount }); } catch (_e) {}
       return;
     }
 
@@ -68,9 +132,12 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
       // Validate payment parameters
       validatePaymentParams({
         country: selectedCountry,
-        amount,
+        amount: payAmount,
         payType: selectedPaymentType
       });
+
+      // Get payment method label
+      const paymentMethodLabel = paymentTypes[selectedPaymentType] || `Payment Type ${selectedPaymentType}`;
 
       // Get current user info (replace with actual user data)
       const userInfo = {
@@ -80,14 +147,17 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
 
       const result = await createPaymentOrder({
         country: selectedCountry,
-        amount,
-        currency,
+        amount: payAmount,
+        currency: 'INR',
         payType: selectedPaymentType,
+        paymentMethod: paymentMethodLabel,
         userInfo,
         callbackUrl: `${window.location.origin}/api/payment/callback`,
-        returnUrl: `${window.location.origin}/payment/success`
+        returnUrl: `${window.location.origin}/payment/success`,
+        description: 'Premium24 Payment'
       });
 
+      try { console.log('[ui] handlePayment:orderCreated', result); } catch (_e) {}
       if (!result.paymentUrl) {
         throw new Error('No payment URL received from provider');
       }
@@ -95,67 +165,29 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
       setOrderId(result.orderId);
       setPaymentUrl(result.paymentUrl);
 
-      // Open payment window
-      const newWindow = window.open(result.paymentUrl, 'WatchPayment', 'width=800,height=600');
-      setPaymentWindow(newWindow);
-
-      if (!newWindow) {
-        setErrorMessage('Payment window blocked. Please allow popups and try again.');
-        setStatus('failed');
-        return;
-      }
-
-      // Start polling for payment status
-      pollPaymentStatus(result.orderId);
+      // Redirect to payment page
+      try {
+        localStorage.setItem('pendingPlan', (typeof description === 'string' && description) || 'Premium');
+        localStorage.setItem('lastOrderId', result.orderId || '');
+      } catch (_e) {}
+      try { console.log('[ui] handlePayment:redirect', { url: result.paymentUrl }); } catch (_e) {}
+      window.location.href = result.paymentUrl;
 
     } catch (error) {
       console.error('Payment error:', error);
       setStatus('failed');
       const errorMsg = error.message || 'Failed to initiate payment. Please try again.';
       setErrorMessage(errorMsg);
+      console.error('[ui] Payment error details:', {
+        error: error.message,
+        stack: error.stack,
+        type: error.constructor.name
+      });
       if (onError) onError(errorMsg);
     } finally {
       setIsProcessing(false);
+      try { console.log('[ui] handlePayment:end'); } catch (_e) {}
     }
-  };
-
-  const pollPaymentStatus = async (orderId) => {
-    let pollCount = 0;
-    const maxPolls = 60; // 5 minutes with 5s interval
-    
-    const pollInterval = setInterval(async () => {
-      pollCount++;
-
-      try {
-        const statusResult = await checkPaymentStatus(orderId);
-        
-        // Check various possible success indicators
-        if (statusResult?.status === 'success' || 
-            statusResult?.code === '0' || 
-            statusResult?.success === true) {
-          setStatus('success');
-          clearInterval(pollInterval);
-          if (onSuccess) onSuccess(statusResult);
-          setTimeout(() => handleClose(), 2000);
-        } else if (statusResult?.status === 'failed' || 
-                   statusResult?.status === 'error') {
-          setStatus('failed');
-          setErrorMessage(statusResult?.message || 'Payment was not completed');
-          clearInterval(pollInterval);
-          if (onError) onError(statusResult?.message || 'Payment failed');
-        }
-      } catch (error) {
-        console.error('Status check error:', error);
-        // Continue polling even if status check fails
-      }
-
-      // Stop polling after max retries
-      if (pollCount >= maxPolls) {
-        clearInterval(pollInterval);
-        setStatus('failed');
-        setErrorMessage('Payment status check timed out. Please check the payment portal.');
-      }
-    }, 5000); // Check every 5 seconds
   };
 
   if (!isOpen) return null;
@@ -177,63 +209,65 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
           </button>
         </div>
 
-        <div className="mb-4 p-3 bg-blue-50 rounded-md">
-          <div className="text-lg font-semibold text-blue-900">
-            Amount: {currency} {amount.toFixed(2)}
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">Enter Amount *</label>
+          <div className="flex">
+            <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-700 text-sm font-medium">
+              ₹
+            </span>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              value={payAmount}
+              onChange={(e) => setPayAmount(Number(e.target.value))}
+              className="flex-1 p-2 border border-gray-300 rounded-r-md focus:ring-2 focus:ring-blue-500 outline-none"
+              disabled={isProcessing || status === 'success'}
+              placeholder="Enter amount in INR"
+            />
           </div>
         </div>
 
-        {/* Country Selection */}
+        {/* Country Display - India Only */}
         <div className="mb-4">
-          <label className="block text-sm font-medium mb-2">Select Country *</label>
-          <select
-            value={selectedCountry}
-            onChange={(e) => setSelectedCountry(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-            disabled={isProcessing || status === 'success'}
-          >
-            <option value="">Choose country...</option>
-            {countries.map(country => (
-              <option key={country} value={country}>
-                {country.charAt(0).toUpperCase() + country.slice(1)}
-              </option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium mb-2">Country</label>
+          <div className="w-full p-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700 flex items-center">
+            <Globe size={18} className="mr-2" />
+            <span className="font-medium">India (INR)</span>
+          </div>
         </div>
 
         {/* Payment Type Category */}
-        {selectedCountry && (
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">Payment Category *</label>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => setPaymentTypeCategory('type1')}
-                className={`flex-1 px-3 py-2 rounded font-medium transition ${
-                  paymentTypeCategory === 'type1' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-                disabled={isProcessing || status === 'success'}
-              >
-                Type 1
-              </button>
-              <button
-                onClick={() => setPaymentTypeCategory('type2')}
-                className={`flex-1 px-3 py-2 rounded font-medium transition ${
-                  paymentTypeCategory === 'type2' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-                disabled={isProcessing || status === 'success'}
-              >
-                Type 2
-              </button>
-            </div>
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">Payment Category *</label>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setPaymentTypeCategory('type1')}
+              className={`flex-1 px-3 py-2 rounded font-medium transition ${
+                paymentTypeCategory === 'type1' 
+                  ? 'bg-blue-500 text-white' 
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              disabled={isProcessing || status === 'success'}
+            >
+              Type 1
+            </button>
+            <button
+              onClick={() => setPaymentTypeCategory('type2')}
+              className={`flex-1 px-3 py-2 rounded font-medium transition ${
+                paymentTypeCategory === 'type2' 
+                  ? 'bg-blue-500 text-white' 
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              disabled={isProcessing || status === 'success'}
+            >
+              Type 2
+            </button>
           </div>
-        )}
+        </div>
 
         {/* Payment Type Selection */}
-        {selectedCountry && Object.keys(paymentTypes).length > 0 && (
+        {Object.keys(paymentTypes).length > 0 && (
           <div className="mb-4">
             <label className="block text-sm font-medium mb-2">Payment Method *</label>
             <select
@@ -296,8 +330,8 @@ const PaymentModal = ({ isOpen, onClose, amount, currency = 'USD', onSuccess, on
               !selectedPaymentType || 
               isProcessing || 
               status === 'success' ||
-              !amount || 
-              amount <= 0
+              !payAmount || 
+              payAmount <= 0
             }
             className="flex-1 px-4 py-2 bg-blue-500 text-white font-medium rounded-md hover:bg-blue-600 transition disabled:bg-gray-300 disabled:cursor-not-allowed"
           >

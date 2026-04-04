@@ -7,6 +7,8 @@ import { body, validationResult } from "express-validator";
 import admin from "firebase-admin";
 import jwt from "jsonwebtoken";
 import pg from "pg";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
 
@@ -19,10 +21,29 @@ const ACCESS_TOKEN_EXPIRES_IN = process.env.ACCESS_TOKEN_EXPIRES_IN || "15m";
 const REFRESH_TOKEN_EXPIRES_IN_DAYS = Number(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS || 30);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
 const DATABASE_URL = process.env.DATABASE_URL || "";
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL || "";
-const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY || "";
 const SETUP_API_KEY = process.env.SETUP_API_KEY || "";
+
+// Load Firebase credentials from env or file
+let FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
+let FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL || "";
+let FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY || "";
+
+// Try to load Firebase key from file if FIREBASE_KEY_FILE is specified
+if (process.env.FIREBASE_KEY_FILE && !FIREBASE_PRIVATE_KEY) {
+  try {
+    const keyFilePath = path.resolve(process.env.FIREBASE_KEY_FILE);
+    if (fs.existsSync(keyFilePath)) {
+      const keyData = JSON.parse(fs.readFileSync(keyFilePath, "utf-8"));
+      FIREBASE_PROJECT_ID = keyData.project_id || FIREBASE_PROJECT_ID;
+      FIREBASE_CLIENT_EMAIL = keyData.client_email || FIREBASE_CLIENT_EMAIL;
+      FIREBASE_PRIVATE_KEY = keyData.private_key || FIREBASE_PRIVATE_KEY;
+      console.log("[Firebase] ✅ Loaded credentials from file:", keyFilePath);
+    }
+  } catch (error) {
+    console.warn("[Firebase] ⚠️  Could not load key file:", error.message);
+  }
+}
+
 const missingFirebaseEnv = [
   !FIREBASE_PROJECT_ID ? "FIREBASE_PROJECT_ID" : null,
   !FIREBASE_CLIENT_EMAIL ? "FIREBASE_CLIENT_EMAIL" : null,
@@ -45,13 +66,18 @@ if (!hasFirebaseServiceAccount) {
 }
 
 if (hasFirebaseServiceAccount && !admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: FIREBASE_PROJECT_ID,
-      clientEmail: FIREBASE_CLIENT_EMAIL,
-      privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-    }),
-  });
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      }),
+    });
+    console.log("[Firebase] ✅ Firebase Admin SDK initialized.");
+  } catch (error) {
+    console.error("[Firebase] ❌ Failed to initialize Firebase Admin SDK. Auth will be disabled.", error.message);
+  }
 }
 
 const pool = new pg.Pool({
@@ -177,6 +203,21 @@ const logUserActivity = async (user, eventType, source = "backend") => {
      VALUES ($1, $2, $3, $4)`,
     [user.id, eventType, source, eventData]
   );
+};
+
+// Best-effort extraction of user from bearer token without enforcing auth
+const tryGetUserFromAuthHeader = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
+    return payload; // { sub, username, role }
+  } catch {
+    return null;
+  }
 };
 
 const runSchemaSql = async () => {
@@ -707,113 +748,353 @@ app.post(
 );
 
 // Payment endpoints
-app.post('/api/payment/create-order', requireAuth, async (req, res) => {
-  const { amount, currency = 'USD', country, payType, description } = req.body;
-  const userId = req.user.sub;
+// WatchPay doesn't need session management - signature-based auth
+// Create order: India only configuration
+app.post('/api/payment/create-order', async (req, res) => {
+  const {
+    amount,
+    currency = 'INR',
+    country = 'india',
+    payType,
+    paymentMethod,
+    description,
+    merchantId,
+    callbackUrl,
+    returnUrl
+  } = req.body;
+  
+  // Extract user ID from bearer token if provided
+  let userId = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
+      userId = payload.sub;
+    } catch (e) {
+      // Token validation failed, continue without user ID
+    }
+  }
 
   try {
     // Validate required fields
-    if (!amount || !country || !payType) {
-      return res.status(400).json({ message: 'Missing required fields: amount, country, payType' });
+    if (!amount) {
+      return res.status(400).json({ message: 'Missing required field: amount' });
+    }
+
+    if (!payType) {
+      return res.status(400).json({ message: 'Missing required field: payType' });
+    }
+
+    // For India, use the merchant ID from env or request
+    const finalMerchantId = merchantId || process.env.WATCHPAY_MERCHANT_ID || '100528114';
+    if (!finalMerchantId) {
+      return res.status(400).json({ message: 'Merchant ID not configured' });
     }
 
     // Generate order ID
     const orderId = `P24_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Store payment order in database
-    await pool.query(
-      `INSERT INTO payment_orders (order_id, user_id, amount, currency, country, pay_type, description, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())`,
-      [orderId, userId, amount, currency, country, payType, description || 'Premium24 Payment']
-    );
+    // Construct callback URLs (frontend can override returnUrl)
+    const finalCallbackUrl = callbackUrl || `${req.protocol}://${req.get('host')}/api/payment/callback`;
+    const finalReturnUrl = returnUrl || `${req.protocol}://${req.get('host')}/payment/success`;
+    const watchpayBaseUrl = process.env.WATCHPAY_BASE_URL || 'https://merchant.watchglb.com';
 
-    // Here you would integrate with WatchPay API
-    // For now, return mock response
-    const paymentUrl = `https://your-watchpay-domain.com/pay/web?order_id=${orderId}`;
+    // Create order from backend server-to-server
+    const normalizedAmount = (Math.round(Number(amount) * 100) / 100).toFixed(2);
+    const normalizedCurrency = String(currency).toUpperCase();
+
+    // Check for development/mock mode
+    const enableMockPayments = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV === 'development';
+
+    if (enableMockPayments) {
+      // DEVELOPMENT MODE: Mock payment gateway response
+      console.log('[payment] *** MOCK MODE ENABLED - Development Payment ***');
+      
+      const mockPaymentUrl = `https://mock-merchant.watchglb.com/pay?merchant_id=${finalMerchantId}&order_id=${orderId}&amount=${normalizedAmount}&currency=${normalizedCurrency}`;
+      
+      // Store order in DB
+      try {
+        await pool.query(
+          `INSERT INTO payment_orders 
+           (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
+          [orderId, userId, normalizedAmount, normalizedCurrency, country, payType, paymentMethod || '', description || 'Premium24 Payment (MOCK)',
+            req.ip || req.connection.remoteAddress, req.get('user-agent')]
+        );
+      } catch (dbError) {
+        console.warn('[payment] DB unavailable, order not stored:', dbError.message);
+      }
+
+      console.log('[payment] Mock order created:', { orderId, amount: normalizedAmount, currency: normalizedCurrency, payType, userId });
+
+      return res.json({
+        orderId,
+        paymentUrl: mockPaymentUrl,
+        status: 'pending',
+        message: '*** DEVELOPMENT MODE - Mock Payment ***',
+        merchantId: finalMerchantId
+      });
+    }
+
+    // PRODUCTION MODE: Real WatchPay API
+    // India Payment Key (provided by WatchPay after IP bind)
+    const paymentKey = process.env.WATCHPAY_API_KEY || process.env.WATCHPAY_PAYMENT_KEY || '';
+    if (!paymentKey) {
+      return res.status(500).json({
+        message: 'WatchPay payment key is not configured. Set ENABLE_MOCK_PAYMENTS=true for development or contact merchant support for your payment key.',
+        hint: 'After IP binding with WatchPay, you will receive a Payment Key. Update WATCHPAY_API_KEY in your .env file with this key.'
+      });
+    }
+
+    const watchpayPayload = {
+      merchant_id: finalMerchantId,
+      order_id: orderId,
+      amount: normalizedAmount,
+      currency: normalizedCurrency,
+      pay_type: String(payType),
+      callback_url: finalCallbackUrl,
+      return_url: finalReturnUrl,
+      sign_type: 'MD5',
+    };
+
+    // WatchPay signature: md5(merchant_id + order_id + amount + currency + payment_key)
+    const signBase = `${watchpayPayload.merchant_id}${watchpayPayload.order_id}${watchpayPayload.amount}${watchpayPayload.currency}${paymentKey}`;
+    watchpayPayload.sign = crypto.createHash('md5').update(signBase).digest('hex');
+
+    console.log('[payment] WatchPay request:', {
+      url: `${watchpayBaseUrl}/api/pay/create`,
+      payload: watchpayPayload,
+      timestamp: new Date().toISOString()
+    });
+
+    const wpResponse = await fetch(`${watchpayBaseUrl}/api/pay/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(watchpayPayload)
+    });
+    const wpText = await wpResponse.text();
+    let wpData = {};
+    try { wpData = JSON.parse(wpText); } catch (_e) {}
+
+    console.log('[payment] WatchPay response:', {
+      status: wpResponse.status,
+      headers: Object.fromEntries(wpResponse.headers.entries()),
+      body: wpText,
+      parsed: wpData,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!wpResponse.ok) {
+      return res.status(502).json({
+        message: 'WatchPay create request failed',
+        status: wpResponse.status,
+        response: wpText
+      });
+    }
+
+    if (wpData.respcode && wpData.respcode !== '0') {
+      console.warn('[payment] WatchPay rejected order:', wpData);
+      return res.status(502).json({
+        message: wpData.respMsg || 'WatchPay rejected create-order',
+        response: wpData
+      });
+    }
+
+    const paymentUrl = wpData.payment_url || wpData.url || wpData.pay_url || wpData.payUrl;
+    if (!paymentUrl) {
+      return res.status(502).json({
+        message: 'WatchPay did not return payment URL',
+        response: wpData
+      });
+    }
+
+    // Store order in DB if available; do not block payment when DB is down
+    try {
+      await pool.query(
+        `INSERT INTO payment_orders 
+         (order_id, user_id, amount, currency, country, pay_type, payment_method, description, status, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
+        [orderId, userId, amount, currency, country, payType, paymentMethod || '', description || 'Premium24 Payment',
+          req.ip || req.connection.remoteAddress, req.get('user-agent')]
+      );
+    } catch (dbError) {
+      console.warn('[payment] DB unavailable, order not stored:', dbError.message);
+    }
+
+    console.log('[payment] Order created:', { orderId, amount, currency, payType, userId });
 
     res.json({
       orderId,
       paymentUrl,
-      status: 'pending'
+      status: 'pending',
+      currency: currency,
+      amount: amount
     });
 
   } catch (error) {
-    console.error('Create payment order error:', error);
-    res.status(500).json({ message: 'Failed to create payment order' });
+    console.error('[payment] Create order error:', error);
+    res.status(500).json({ message: 'Failed to create payment order', error: error.message });
   }
 });
 
-app.get('/api/payment/status/:orderId', requireAuth, async (req, res) => {
+// Get payment status
+app.get('/api/payment/status/:orderId', async (req, res) => {
   const { orderId } = req.params;
-  const userId = req.user.sub;
 
   try {
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
+    }
+
+    // Try to get user ID from token
+    let userId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
+        userId = payload.sub;
+      } catch (e) {
+        // Token validation failed, continue without user ID
+      }
+    }
+
+    // Query payment order
     const result = await pool.query(
-      'SELECT * FROM payment_orders WHERE order_id = $1 AND user_id = $2',
-      [orderId, userId]
+      `SELECT id, order_id, user_id, amount, currency, country, pay_type, payment_method, 
+              description, status, transaction_id, created_at, updated_at
+       FROM payment_orders 
+       WHERE order_id = $1`,
+      [orderId]
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: 'Payment order not found' });
+      return res.status(404).json({ success: false, message: 'Payment order not found' });
     }
 
     const order = result.rows[0];
+
+    // If user is authenticated, verify they own this order
+    if (userId && order.user_id && order.user_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view this order' });
+    }
+
     res.json({
+      success: true,
       orderId: order.order_id,
-      status: order.status,
       amount: order.amount,
       currency: order.currency,
+      status: order.status,
+      paymentMethod: order.payment_method,
+      transactionId: order.transaction_id,
       createdAt: order.created_at,
       updatedAt: order.updated_at
     });
 
   } catch (error) {
-    console.error('Get payment status error:', error);
-    res.status(500).json({ message: 'Failed to get payment status' });
+    console.error('[payment] Status check error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get payment status', error: error.message });
   }
 });
 
-app.post('/api/payment/webhook', async (req, res) => {
-  // WatchPay webhook endpoint
-  const { order_id, status, transaction_id, amount } = req.body;
+// Payment callback from WatchPay
+app.post('/api/payment/callback', async (req, res) => {
+  const { order_id, status, transaction_id, amount, currency, pay_type, pay_status } = req.body;
 
-  // Verify the request is from WatchPay (implement signature verification)
-  // For now, accept all requests
+  console.log('[payment] Callback received:', { order_id, status, pay_status, transaction_id, amount });
 
   try {
-    // Update payment order status
-    const result = await pool.query(
-      `UPDATE payment_orders
-       SET status = $1, transaction_id = $2, updated_at = NOW()
-       WHERE order_id = $3
-       RETURNING user_id, amount`,
-      [status, transaction_id, order_id]
+    if (!order_id) {
+      console.warn('[payment] Callback missing order_id');
+      return res.status(400).json({ code: '1001', msg: 'Missing order_id' });
+    }
+
+    // Log the callback request
+    await pool.query(
+      `INSERT INTO payment_callbacks (order_id, callback_type, payload, ip_address)
+       VALUES ($1, $2, $3, $4)`,
+      [order_id, 'watchpay_callback', JSON.stringify(req.body), req.ip || req.connection.remoteAddress]
     );
 
-    if (result.rowCount) {
-      const { user_id, amount } = result.rows[0];
+    // Determine payment status - WatchPay might use different status values
+    const paymentSuccess = status === 'success' || status === '0' || pay_status === 'success' || pay_status === '0';
+    const finalStatus = paymentSuccess ? 'success' : (status === 'failed' || status === '-1' ? 'failed' : 'pending');
 
-      // If payment successful, update user wallet
-      if (status === 'success') {
-        await pool.query(
-          'UPDATE auth_users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
-          [amount, user_id]
+    // Update order status
+    const result = await pool.query(
+      `UPDATE payment_orders 
+       SET status = $1, transaction_id = $2, updated_at = NOW()
+       WHERE order_id = $3
+       RETURNING id, user_id, amount`,
+      [finalStatus, transaction_id, order_id]
+    );
+
+    if (!result.rowCount) {
+      console.warn('[payment] Order not found for callback:', order_id);
+      return res.status(404).json({ code: '1002', msg: 'Order not found' });
+    }
+
+    const orderData = result.rows[0];
+    const { user_id, amount: orderAmount } = orderData;
+
+    // If payment successful, update user wallet and create transaction record
+    if (paymentSuccess && user_id) {
+      try {
+        // Get user's current balance
+        const userResult = await pool.query(
+          'SELECT wallet_balance FROM auth_users WHERE id = $1',
+          [user_id]
         );
 
-        // Log the payment activity
-        const userResult = await pool.query('SELECT * FROM auth_users WHERE id = $1', [user_id]);
-        if (userResult.rowCount) {
-          await logUserActivity(userResult.rows[0], 'payment_received', 'watchpay');
-        }
+        const balanceBefore = userResult.rows[0]?.wallet_balance || 0;
+        const balanceAfter = balanceBefore + parseFloat(orderAmount);
+
+        // Update user wallet
+        await pool.query(
+          'UPDATE auth_users SET wallet_balance = $1, updated_at = NOW() WHERE id = $2',
+          [balanceAfter, user_id]
+        );
+
+        // Create transaction record
+        await pool.query(
+          `INSERT INTO transactions 
+           (user_id, type, amount, balance_before, balance_after, payment_order_id, transaction_id, status, description)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [user_id, 'deposit', orderAmount, balanceBefore, balanceAfter, 
+           order_id, transaction_id, 'success', `Payment received via WatchPay (Paytm)`]
+        );
+
+        // Log user activity
+        await logUserActivity(
+          { id: user_id, username: 'user_' + user_id },
+          'payment_received',
+          'watchpay'
+        );
+
+        console.log('[payment] Success: wallet updated for user', user_id, 'Amount:', orderAmount);
+      } catch (walletError) {
+        console.error('[payment] Error updating wallet:', walletError);
+        // Don't fail the callback response even if wallet update fails
       }
     }
 
-    res.json({ success: true });
+    // Return success to WatchPay
+    res.json({ code: '0', msg: 'success' });
 
   } catch (error) {
-    console.error('Payment webhook error:', error);
-    res.status(500).json({ message: 'Webhook processing failed' });
+    console.error('[payment] Callback error:', error);
+    res.status(500).json({ code: '9999', msg: 'Internal server error' });
   }
+});
+
+// Webhook endpoint (alternative callback path)
+app.post('/api/payment/webhook', async (req, res) => {
+  // Redirect to callback handler
+  req.body.pay_status = req.body.status;
+  return app._router.stack
+    .find(r => r.route && r.route.path === '/api/payment/callback')
+    ?.route?.stack?.[0]?.handle(req, res);
 });
 
 app.get('/api/payment/orders', requireAuth, async (req, res) => {
@@ -837,6 +1118,15 @@ app.get('/api/payment/orders', requireAuth, async (req, res) => {
     res.status(500).json({ message: 'Failed to get payment orders' });
   }
 });
+
+// (async () => {
+//   try {
+//     await runSchemaSql();
+//     console.log('Database schema initialized');
+//   } catch (error) {
+//     console.error('Failed to initialize schema:', error);
+//   }
+// })();
 
 app.listen(PORT, () => {
   console.log(`Premium24 backend listening on port ${PORT}`);
